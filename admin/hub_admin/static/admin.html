@@ -29,14 +29,17 @@
 
 <section id="login-box" class="card">
   <h2>Đăng nhập quản trị</h2>
-  <label>Mật khẩu quản trị <input id="login-token" type="password" size="40" autocomplete="off"></label>
-  <button id="login-btn">Đăng nhập</button>
+  <form id="login-form">
+    <label>Tên đăng nhập <input id="login-user" name="username" type="text" autocomplete="username" value="admin"></label>
+    <label>Mật khẩu quản trị <input id="login-token" name="password" type="password" size="40" autocomplete="current-password"></label>
+    <button id="login-btn" type="submit">Đăng nhập</button>
+  </form>
   <p class="muted">Hoặc dùng token quyền tạm (dành cho agent): dán vào ô trên rồi bấm “Đăng nhập bằng quyền tạm”.</p>
-  <button id="login-grant-btn">Đăng nhập bằng quyền tạm</button>
+  <button id="login-grant-btn" type="button">Đăng nhập bằng quyền tạm</button>
   <h3>Quên mật khẩu?</h3>
   <p class="muted">Nhập mã khôi phục đã được cấp (mã chỉ dùng được 1 lần) và mật khẩu mới. Đặt lại xong mọi phiên đăng nhập cũ đều bị huỷ.</p>
   <label>Mã khôi phục <input id="recover-code" type="text" size="30" autocomplete="off"></label>
-  <label>Mật khẩu mới (ít nhất 8 ký tự) <input id="recover-new" type="password" size="30" autocomplete="off"></label>
+  <label>Mật khẩu mới (ít nhất 8 ký tự) <input id="recover-new" type="password" size="30" autocomplete="new-password"></label>
   <button id="recover-btn">Đặt lại mật khẩu bằng mã khôi phục</button>
   <div id="recover-issued"></div>
   <p class="muted">Mất cả mã khôi phục? Dùng đường dự phòng qua SSH — xem file HUONG-DAN-RESET-MAT-KHAU.md trong gói.</p>
@@ -92,8 +95,8 @@
   <section class="card" id="account-card">
     <h2>Tài khoản quản trị</h2>
     <h3>Đổi mật khẩu</h3>
-    <label>Mật khẩu hiện tại <input id="pw-current" type="password" size="30" autocomplete="off"></label>
-    <label>Mật khẩu mới (ít nhất 8 ký tự) <input id="pw-new" type="password" size="30" autocomplete="off"></label>
+    <label>Mật khẩu hiện tại <input id="pw-current" type="password" size="30" autocomplete="current-password"></label>
+    <label>Mật khẩu mới (ít nhất 8 ký tự) <input id="pw-new" type="password" size="30" autocomplete="new-password"></label>
     <button id="pw-change-btn">Đổi mật khẩu</button>
     <p class="muted">Đổi xong, mọi phiên đăng nhập KHÁC đều bị huỷ; mật khẩu chỉ lưu dạng băm, không lưu thô.</p>
     <h3>Mã khôi phục (dùng khi quên mật khẩu)</h3>
@@ -102,7 +105,7 @@
     <div id="recovery-issued"></div>
     <h3>Xác thực hai lớp (TOTP) cho thao tác nhạy cảm</h3>
     <p class="muted" id="totp-status">…</p>
-    <label>Mật khẩu hiện tại (để ghi danh / tắt TOTP) <input id="totp-pw" type="password" size="30" autocomplete="off"></label>
+    <label>Mật khẩu hiện tại (để ghi danh / tắt TOTP) <input id="totp-pw" type="password" size="30" autocomplete="current-password"></label>
     <button id="totp-enroll-btn">Ghi danh TOTP</button>
     <button id="totp-disable-btn">Tắt TOTP</button>
     <div id="totp-issued"></div>
@@ -153,7 +156,7 @@
     <label>Mô tả <input id="f-desc" type="text" size="44"></label>
     <label>Hạn nhận/trả lời (giây, trống = mặc định, tối thiểu 180) <input id="f-deadline" type="number" min="180"></label>
     <label>Ghi chú <input id="f-notes" type="text" size="44"></label>
-    <label id="f-token-row">Token bot (chỉ khi tạo mới / thay token) <input id="f-token" type="password" size="44" autocomplete="off"></label>
+    <label id="f-token-row">Token bot (chỉ khi tạo mới / thay token) <input id="f-token" type="password" size="44" autocomplete="new-password"></label>
     <p class="muted">Agent mới luôn bắt đầu ở trạng thái TẠM DỪNG — bấm Mở lại khi sẵn sàng.</p>
     <button id="agent-save-btn" value="save">Lưu</button>
     <button value="cancel">Huỷ</button>
@@ -192,14 +195,15 @@ function stepUpHeaders() {
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 // ---------------------------------------------------------------- login
-$("login-btn").onclick = async () => {
+$("login-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
   try {
     await api("POST", "/api/login", { password: $("login-token").value });
     grantToken = null;
     $("login-box").classList.add("hidden"); $("app").classList.remove("hidden");
     note("Đã đăng nhập quản trị."); refreshAll();
   } catch (e) { note(e.message, true); }
-};
+});
 $("logout-btn").onclick = async () => {
   try { await api("POST", "/api/logout"); } catch (e) { /* session may already be gone */ }
   grantToken = null; grantScope = null;

@@ -257,6 +257,17 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(res.status, 200)
         self.assertIn("Hướng dẫn quản trị", body)
 
+    def test_login_form_is_password_manager_friendly(self):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        conn.request("GET", "/")
+        res = conn.getresponse()
+        body = res.read().decode("utf-8")
+        conn.close()
+        self.assertEqual(res.status, 200)
+        self.assertIn('id="login-form"', body)
+        self.assertIn('autocomplete="username"', body)
+        self.assertIn('autocomplete="current-password"', body)
+
 
 if __name__ == "__main__":
     unittest.main()
