@@ -30,7 +30,7 @@ Gõ lệnh sau (thay phần trong ngoặc bằng thông tin máy nhà của bạ
 ssh <ten-dang-nhap>@<dia-chi-may-chu>
 ```
 
-Ví dụ dạng lệnh: `ssh user@192.168.x.x` hoặc qua tên miền nội bộ của nhà.
+Ví dụ dạng lệnh: `ssh user@<ip-lan-cua-may-chu>` hoặc qua tên miền nội bộ của nhà.
 Nhập mật khẩu của máy chủ khi được hỏi (mật khẩu này là mật khẩu SSH của
 máy, khác mật khẩu trang quản trị). Đăng nhập thành công khi thấy dấu
 nhắc lệnh của máy chủ.
