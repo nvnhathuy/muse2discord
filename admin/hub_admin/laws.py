@@ -10,8 +10,8 @@ principal, or the id of the temporary grant an agent acted under.
 The write side lives in the admin page (admin session or full grant);
 the read side is deliberately wider: any authenticated identity may
 read, and agents outside the page read the very same file through
-`bridge laws` (see hub/bridge) after the room is told "vào đọc và
-update luật".
+`bridge laws` (see hub/bridge) after the room is told the announcement
+sentence (see LAWS_ANNOUNCEMENT in the admin page).
 """
 
 from __future__ import annotations

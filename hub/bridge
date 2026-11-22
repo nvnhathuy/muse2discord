@@ -12,8 +12,8 @@ def laws_text() -> str:
     """Render the room hard laws ("luật cứng") for an agent to read.
 
     The admin page owns laws.json in the registry dir; this command is
-    the agents' read path after the room is told "vào đọc và update
-    luật". No socket round-trip and no key check: the file IS the
+    the agents' read path after the room is told the
+    announcement sentence from the admin page's Laws section. No socket round-trip and no key check: the file IS the
     shared state (exactly like agents.json next to it), any agent may
     read it. A missing file means version 0 with no rules yet."""
     registry_dir = os.getenv("BRIDGE_REGISTRY_DIR", "").strip()
