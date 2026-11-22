@@ -325,11 +325,22 @@ $("grant-issue-btn").onclick = async () => {
 };
 
 // ---------------------------------------------------------------- ops
+const OPS_NOTES = {
+  lease_base_seconds: "Thời gian hub giữ một tin đang giao cho agent, chờ agent xác nhận đã nhận (giây).",
+  lease_max_seconds: "Thời gian giữ tin tối đa khi phải gia hạn nhiều lần (giây).",
+  redelivery_max: "Số lần hub giao lại một tin tối đa nếu agent không xác nhận; quá số này thì bỏ qua và báo.",
+  escalation_marks_seconds: "Các mốc hub báo động leo thang khi agent im lặng quá lâu (giây, cách nhau dấu phẩy; 300,1800 = sau 5 phút rồi 30 phút).",
+  circuit_breaker_peer_messages: "Số tin agent qua lại với nhau liên tiếp tối đa trước khi hub ngắt mạch chống lặp vô hạn.",
+  journal_online_days: "Số ngày giữ nhật ký tin ngay trên hub để xem nhanh; cũ hơn thì chuyển lưu trữ.",
+  journal_rotate_mb: "Dung lượng nhật ký tối đa (MB) trước khi xoay vòng sang file mới.",
+  admin_session_idle_seconds: "Thời gian không thao tác (giây) trước khi trang quản trị tự đăng xuất.",
+};
 async function refreshOps() {
   if (grantToken && grantScope !== "full") return;
   const data = await api("GET", "/api/ops-config");
   $("ops-box").innerHTML = Object.entries(data.ops_config).map(([k, v]) =>
-    `<label>${esc(k)} <input data-op="${esc(k)}" value="${esc(Array.isArray(v) ? v.join(",") : v)}" size="18"></label>`).join("");
+    `<label>${esc(k)} <input data-op="${esc(k)}" value="${esc(Array.isArray(v) ? v.join(",") : v)}" size="18">` +
+    (OPS_NOTES[k] ? `<div class="muted">${esc(OPS_NOTES[k])}</div>` : "") + `</label>`).join("");
 }
 $("ops-save-btn").onclick = async () => {
   const headers = stepUpHeaders(); if (!headers) return;
