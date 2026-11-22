@@ -16,7 +16,7 @@ agent-key-intake: kiểm tra định dạng thật chặt → ghi 1 dòng vào
   ▼
 agent-key-install (root, systemd .path canh file pending):
   kiểm tra lại từ đầu → chống trùng theo blob → append vào
-  /home/debian/.ssh/authorized_keys với comment "hub-agent:<agentkey>"
+  authorized_keys của user điều phối với comment "hub-agent:<agentkey>"
   → ghi log /var/log/agent-key-install.log
 ```
 
@@ -87,7 +87,7 @@ khi cài.
   xong.
 - Trên VM: `tail /var/log/agent-key-install.log` phải có dòng
   `ADD agent=<key> fp=SHA256:...`, và key xuất hiện trong
-  `/home/debian/.ssh/authorized_keys` với comment `hub-agent:<key>`.
+  `authorized_keys của user điều phối` với comment `hub-agent:<key>`.
 - Test độc lập hai script (không đụng hệ thống thật):
   `bash test_keydrop.sh` ngay trong thư mục này.
 
@@ -101,4 +101,4 @@ khi cài.
 - Installer (root) kiểm tra lại toàn bộ, chống trùng theo blob khoá,
   giữ authorized_keys ở quyền 600 và chủ `debian`.
 - Muốn thu hồi một agent: xoá dòng có comment `hub-agent:<key>` khỏi
-  `/home/debian/.ssh/authorized_keys`.
+  `authorized_keys của user điều phối`.

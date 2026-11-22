@@ -11,8 +11,15 @@
 set -u
 
 PENDING_FILE="${KEYDROP_PENDING_FILE:-/var/lib/keydrop/pending.tsv}"
-AUTH_KEYS="${KEYDROP_AUTH_KEYS:-/home/debian/.ssh/authorized_keys}"
 AUTH_OWNER="${KEYDROP_AUTH_OWNER:-debian}"
+if [ -n "${KEYDROP_AUTH_KEYS:-}" ]; then
+  AUTH_KEYS="$KEYDROP_AUTH_KEYS"
+else
+  # Default: the operator account's own authorized_keys, resolved
+  # from the account database rather than a hard-coded home path.
+  owner_home="$(getent passwd "$AUTH_OWNER" | cut -d: -f6)"
+  AUTH_KEYS="${owner_home:-/home/$AUTH_OWNER}/.ssh/authorized_keys"
+fi
 LOG_FILE="${KEYDROP_LOG_FILE:-/var/log/agent-key-install.log}"
 AGENT_RE='^[a-z0-9_-]{1,32}$'
 KEY_RE='^ssh-ed25519 ([A-Za-z0-9+/]{40,}={0,3})$'
