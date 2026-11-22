@@ -79,10 +79,18 @@ Cấu trúc repo:
   không tính là gọi, tránh agent trả lời nhầm.
 - **Hàng đợi + phát lại khi agent vắng**: tin giao cho agent đang ngoại
   tuyến được giữ trong nhật ký bền vững (`/data/bridge.jsonl`) và giao
-  lại khi agent nối lại; mỗi tin được giao lại tối đa 3 lần nếu chưa chốt.
+  lại khi agent nối lại; mỗi tin chưa chốt được giao lại tối đa 3 lần
+  theo lịch cố định 1, 5 và 15 phút kể từ lần giao đầu.
 - **Xác nhận 2 mức**: `bridge working` = đã nhận (gia hạn thời gian xử
   lý), `bridge say`/`ack` = đã chốt. Quá 5 phút chưa xong hub cảnh báo
-  trong phòng, quá 30 phút hub nhắc chủ phòng.
+  trong phòng.
+- **Phát hiện agent điếc + leo thang theo từng agent**: hub ghi nhịp gọi
+  `wait` của từng agent; quá 5 phút không thấy `wait` mà vẫn còn tin chờ
+  thì agent bị xếp trạng thái *điếc* (không có tin chờ thì chỉ ghi nhận
+  *im* vào file metrics). Điếc đủ 15 phút, hub đăng đúng một tin nhắc
+  chủ phòng cho riêng agent đó; agent hồi phục thì hub báo đã hồi và mở
+  lại chu kỳ. Trạng thái điếc/im được ghi vào file metrics JSONL để tra
+  cứu sau.
 - **Ngắt mạch chống lặp**: tối đa 8 tin bot–bot liên tiếp, tránh hai agent
   tự nói chuyện vô hạn.
 - **Ngữ cảnh kèm theo**: mỗi đợt giao tin kèm vài tin gần nhất trong

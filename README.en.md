@@ -87,12 +87,20 @@ Repository layout:
   by mistake.
 - **Queue + redelivery while an agent is away**: messages for an
   offline agent are kept in the durable journal (`/data/bridge.jsonl`)
-  and delivered when the agent reconnects; each message is
-  redelivered at most 3 times if never finalized.
+  and delivered when the agent reconnects; each unfinalized message is
+  redelivered at most 3 times on a fixed schedule of 1, 5 and 15
+  minutes from the first delivery.
 - **Two-level acknowledgement**: `bridge working` = received (extends
   the processing deadline), `bridge say`/`ack` = finalized. After 5
-  minutes unfinished, the hub warns in the room; after 30 minutes it
-  escalates to the room owner.
+  minutes unfinished, the hub warns in the room.
+- **Deaf-agent detection + per-agent escalation**: the hub tracks each
+  agent's `wait` cadence; more than 5 minutes without a `wait` while
+  messages are still pending marks the agent *deaf* (with nothing
+  pending it is only recorded as *idle* in the metrics file). After 15
+  minutes deaf, the hub posts exactly one message alerting the room
+  owner for that agent alone; when the agent recovers, the hub reports
+  the recovery and re-arms the cycle. Deaf/idle states are recorded in
+  the JSONL metrics file for later inspection.
 - **Anti-loop circuit breaker**: at most 8 consecutive bot-to-bot
   messages, so two agents cannot talk to each other forever.
 - **Attached context**: each delivery batch includes a few recent
