@@ -11,9 +11,18 @@ import os
 import time
 import urllib.request
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 log = logging.getLogger(__name__)
+
+# Deaf-agent detection + escalation + redelivery cadence (issue: hub-side
+# detection layer). Design constants, deliberately NOT env vars in v1:
+# these are approved design decisions, not operational tuning knobs.
+DEAF_AFTER = 300          # seconds without a wait before an agent counts as DEAF
+DEAF_CHECK_INTERVAL = 60  # hub cadence for evaluating the deaf state
+ESCALATE_AFTER = 900      # seconds spent DEAF before escalation
+REDELIVERY_SCHEDULE = (60, 300, 900)  # redelivery at minutes 1, 5, 15 from first_at
 
 
 class Reliability:
@@ -31,6 +40,12 @@ class Reliability:
         self.queued_at = {}
         self.last_wait_at = dict.fromkeys(keys)
         self.last_progress_at = dict.fromkeys(keys)
+        # Explicit per-agent liveness state (deaf/idle detection). In-memory
+        # only, never journaled: it is fully derived from last_wait_at plus
+        # the queues, both of which are rebuilt after a restart.
+        self.deaf_state = {a: {"state": "unknown", "deaf_since": None,
+                               "escalated": False, "escalated_at": None} for a in keys}
+        self.next_deaf_check = self.started_at + DEAF_CHECK_INTERVAL
         self.receive_samples = {a: [] for a in keys}
         self.warning_state = []
         self.warning_lock = asyncio.Lock()
@@ -97,6 +112,80 @@ class Reliability:
         last = self.last_wait_at[agent]
         return last is not None and self.clock() - last <= 100
 
+    def _wall_hhmmss(self, monotonic_at):
+        """Render a monotonic timestamp as HH:MM:SS wall time in the room's
+        zone (+07). Monotonic values are converted through the offset
+        between time.time() and the hub clock at this moment."""
+        wall = time.time() - (self.clock() - monotonic_at)
+        return datetime.fromtimestamp(wall, tz=timezone(timedelta(hours=7))).strftime("%H:%M:%S")
+
+    def _wall_iso_utc(self, monotonic_at):
+        wall = time.time() - (self.clock() - monotonic_at)
+        return datetime.fromtimestamp(wall, tz=timezone.utc).isoformat()
+
+    def _deaf_check(self, now):
+        """Evaluate the explicit per-agent liveness state.
+
+        alive:  a wait within the last 100s (matches alive()).
+        stale:  100-300s without a wait - buffer band, no action.
+        deaf:   >300s without a wait AND un-acked messages pending.
+        idle:   >300s without a wait, nothing pending - log only,
+                never warned, never escalated.
+        unknown: never waited since hub start. For the first DEAF_AFTER
+                seconds after hub start nothing is concluded (a healthy
+                agent needs time to reconnect); after that the agent is
+                evaluated normally, with deaf_since = started_at + DEAF_AFTER.
+
+        Logs/metrics are emitted only on state transitions, never on
+        every evaluation - no 60s spam.
+        """
+        for agent in self.config.agents:
+            entry = self.deaf_state.setdefault(
+                agent, {"state": "unknown", "deaf_since": None,
+                        "escalated": False, "escalated_at": None})
+            last = self.last_wait_at.get(agent)
+            if last is None and now - self.started_at <= DEAF_AFTER:
+                continue  # post-restart grace: conclude nothing yet
+            pending = len(self.queues.get(agent, ()))
+            if last is None:
+                gap = now - self.started_at
+                deaf_since = self.started_at + DEAF_AFTER
+            else:
+                gap = now - last
+                deaf_since = last + DEAF_AFTER
+            if gap <= 100:
+                new_state = "alive"
+            elif gap <= DEAF_AFTER:
+                new_state = "stale"
+            elif pending:
+                new_state = "deaf"
+            else:
+                new_state = "idle"
+            old_state = entry["state"]
+            if new_state == old_state:
+                continue
+            if new_state == "deaf":
+                if entry.get("deaf_since") != deaf_since:
+                    # A genuinely new deaf episode; a continuing one (same
+                    # deaf_since after an idle dip) keeps its escalation flag.
+                    entry["escalated"] = False
+                    entry["escalated_at"] = None
+                entry["deaf_since"] = deaf_since
+                log.warning("agent %s is DEAF: no wait for %.0fs, %d pending",
+                            agent, gap, pending)
+                self._metric("deaf", agent=agent, silent_seconds=gap, pending=pending,
+                             deaf_since_wall=self._wall_iso_utc(deaf_since))
+            elif new_state == "idle":
+                log.info("agent %s idle: no wait for %.0fs, nothing pending", agent, gap)
+                self._metric("idle", agent=agent, silent_seconds=gap)
+            elif new_state == "alive" and old_state == "deaf":
+                silent = now - entry["deaf_since"] if entry.get("deaf_since") is not None else gap
+                self._metric("recovered_deaf", agent=agent, silent_seconds=silent)
+                entry["deaf_since"] = None
+                entry["escalated"] = False
+                entry["escalated_at"] = None
+            entry["state"] = new_state
+
     def is_hub_message(self, message):
         if self.config.hub_bot_id and message.author_id == self.config.hub_bot_id:
             return True
@@ -107,10 +196,17 @@ class Reliability:
         # Config.Agent carries no leader role, so key order is the rule.
         default = next(iter(self.config.agents.values()), None)
         sender = self.config.hub_bot_id or (default.bot_id if default is not None else 0)
-        return message.author_id == sender and message.id in {
-            g[key] for g in self.warning_state for key in ("message_id", "tier2_id") if g.get(key)}
+        ids = {g[key] for g in self.warning_state for key in ("message_id", "tier2_id") if g.get(key)}
+        # Escalation messages are tracked per warning member (an agent's own
+        # tier2_id), not only per group; include those ids too.
+        ids |= {m["tier2_id"] for g in self.warning_state
+                for m in g.get("members", {}).values() if m.get("tier2_id")}
+        return message.author_id == sender and message.id in ids
 
     def receive_deadline(self, agent):
+        # Observational only since the fixed 1/5/15 redelivery schedule
+        # landed (see _next_due_at): the p95 estimate is still measured and
+        # restored, but it no longer drives redelivery timing.
         samples = sorted(self.receive_samples[agent][-1000:])
         if not samples:
             return self.config.receive_deadlines[agent]
@@ -191,13 +287,34 @@ class Reliability:
                                             for mid, state, _ in states],
                     "last_acked_id": str(self.acked[agent])}
 
+    def _next_due_at(self, agent, mid):
+        """When an unreceived message is next due for redelivery: a fixed
+        schedule from first_at (REDELIVERY_SCHEDULE, minutes 1/5/15 by
+        redelivery count). None once the schedule is exhausted - the sweep
+        then moves the message to suspects. Received messages are governed
+        by their working lease instead (handled in _overdue). Derived from
+        the existing delivery state; no journal schema change, and the
+        post-restart rebase of first_at in _reset_reliability_clocks keeps
+        working (the schedule simply restarts from the rebased first_at)."""
+        state = self.delivery.get((agent, mid))
+        if not state:
+            return None
+        if state["received"]:
+            return state["lease_until"]
+        if state["redelivered"] >= len(REDELIVERY_SCHEDULE):
+            return None
+        return state["first_at"] + REDELIVERY_SCHEDULE[state["redelivered"]]
+
     def _overdue(self, agent, mid):
         state = self.delivery.get((agent, mid))
         if not state:
             return False
         if state["received"]:
             return self.clock() > state["lease_until"]
-        return self.clock() - state["delivered_at"] > self.receive_deadline(agent)
+        due_at = self._next_due_at(agent, mid)
+        if due_at is None:
+            return True  # schedule exhausted: overdue so sweep() suspects it
+        return self.clock() >= due_at
 
     def _completion_metric(self, agent, mid, event):
         self.last_progress_at[agent] = self.clock()
@@ -239,6 +356,9 @@ class Reliability:
         if now >= self.next_ping:
             self.next_ping = now + 60
             await self._health_ping()
+        if now >= self.next_deaf_check:
+            self.next_deaf_check = now + DEAF_CHECK_INTERVAL
+            self._deaf_check(now)
         async with self.warning_lock:
             await self._flush_recoveries()
             await self._warn(now)
@@ -269,6 +389,23 @@ class Reliability:
                 lines.append(f"{agent}: {member['reason']}")
         return "Bridge status\n" + "\n".join(lines)
 
+    def _escalation_text(self, agent, deaf_since, pending_ids, now):
+        """The single per-agent escalation summary (tier 2). Wall-clock
+        times are rendered in the room's zone (+07) from monotonic state."""
+        shown = pending_ids[:5]
+        ids = ", ".join(shown)
+        if len(pending_ids) > len(shown):
+            ids += f" +{len(pending_ids) - len(shown)} tin khác"
+        last = self.last_wait_at.get(agent)
+        last_text = (self._wall_hhmmss(last) if last is not None
+                     else "chưa từng gọi wait từ khi hub lên")
+        progress = self.last_progress_at.get(agent)
+        progress_text = self._wall_hhmmss(progress) if progress is not None else "không có"
+        return (f"<@{self.config.owner_id}> Bridge escalation: {agent} ĐIẾC từ "
+                f"{self._wall_hhmmss(deaf_since)} (đã {(now - deaf_since) / 60:.1f} phút), "
+                f"{len(pending_ids)} tin đang kẹt: {ids}; lần wait cuối {last_text}, "
+                f"lần tiến triển cuối {progress_text}.")
+
     async def _post_warning(self, text, edit_id=None, mention=False):
         # A transport operation has explicit mention permission only at tier 2.
         return str(await asyncio.wait_for(self.transport.send_warning(text, edit_id, mention), 10))
@@ -286,22 +423,42 @@ class Reliability:
             overdue = any(self._overdue(agent, mid) for mid in pending)
             suspect = bool(self.suspects[agent])
             had_ack = any(self.delivery.get((agent, mid), {}).get("had_ack1") for mid in pending)
-            reason = "tin nghi ngờ" if suspect else "nhận rồi im" if had_ack else "chưa nhận"
+            entry = self.deaf_state.get(agent) or {}
+            is_deaf = entry.get("state") == "deaf"
+            last = self.last_wait_at.get(agent)
+            # Tier-1 branches: suspect / received-but-silent / explicitly
+            # DEAF (was alive, stopped calling wait) / never received.
+            if suspect:
+                reason = "tin nghi ngờ"
+            elif had_ack:
+                reason = "nhận rồi im"
+            elif is_deaf and last is not None:
+                reason = f"điếc: không gọi wait từ {self._wall_hhmmss(last)}"
+            else:
+                reason = "chưa nhận"
             if agent in active:
                 for group in self.warning_state:
                     member = group["members"].get(agent)
-                    if member and not member["recovered"] and member["reason"] != reason:
-                        member["reason"] = reason
-                        group["needs_edit"] = True
-                        self._save_warnings()
+                    if member and not member["recovered"]:
+                        if member["reason"] != reason:
+                            member["reason"] = reason
+                            group["needs_edit"] = True
+                            self._save_warnings()
+                        if member.get("deaf_since") is None and is_deaf:
+                            member["deaf_since"] = entry.get("deaf_since")
+                            self._save_warnings()
                 continue
             progress = self.last_progress_at[agent]
             if progress is not None and now - progress <= 300:
                 continue
             if not (suspect or (age > 300 and (not self.alive(agent) or overdue))):
                 continue
-            new[agent] = {"reason": reason, "started": now - max(0, age),
-                          "elapsed_before": 0, "recovered": False, "minutes": 0}
+            deaf_branch = is_deaf and last is not None
+            new[agent] = {"reason": reason,
+                          "started": entry["deaf_since"] if deaf_branch else now - max(0, age),
+                          "elapsed_before": 0, "recovered": False, "minutes": 0,
+                          "deaf_since": entry.get("deaf_since") if is_deaf else None,
+                          "escalated": False, "tier2_id": None}
         if new:
             group = next((g for g in reversed(self.warning_state)
                           if any(not m["recovered"] for m in g["members"].values())), None)
@@ -326,11 +483,40 @@ class Reliability:
                     self._metric("warning1", agents=list(members), message_id=mid,
                                  detection_seconds={a: ages.get(a) for a in members},
                                  cause="", false_positive=None)
-            if members and group["tier2_id"] is None and any(ages.get(a, 0) >= 1800 for a in members):
-                text = f"<@{self.config.owner_id}> Bridge escalation: " + ", ".join(members)
-                group["tier2_id"] = await self._post_warning(text, mention=True)
+            # Escalation is PER AGENT, once per deaf episode: an agent that
+            # has been DEAF for ESCALATE_AFTER with messages still pending
+            # gets its own summary message. (The old group-level check -
+            # one tier2_id per group - meant a second deaf agent in the
+            # same group was never escalated at all.)
+            for agent, member in members.items():
+                if member.get("escalated"):
+                    continue
+                entry = self.deaf_state.get(agent) or {}
+                if entry.get("state") != "deaf":
+                    continue
+                deaf_since = entry.get("deaf_since")
+                if deaf_since is None:
+                    deaf_since = member.get("deaf_since")
+                if deaf_since is None or now - deaf_since < ESCALATE_AFTER:
+                    continue
+                pending_ids = sorted(set(self.queues[agent]) | self.suspects[agent], key=int)
+                if not pending_ids:
+                    continue
+                text = self._escalation_text(agent, deaf_since, pending_ids, now)
+                mid = await self._post_warning(text, mention=True)
+                member["escalated"] = True
+                member["tier2_id"] = mid
+                if group.get("tier2_id") is None:
+                    # Group-level id kept for readers that only know the
+                    # legacy shape (e.g. the runtime's own-message filter).
+                    group["tier2_id"] = mid
+                entry["escalated"] = True
+                entry["escalated_at"] = now
                 self._save_warnings()
-                self._metric("warning2", agents=list(members), message_id=group["tier2_id"])
+                self._metric("warning2", agents=[agent], agent=agent, message_id=mid)
+                self._metric("escalation", agent=agent, deaf_seconds=now - deaf_since,
+                             pending=len(pending_ids), pending_ids=pending_ids[:5],
+                             message_id=mid)
 
     async def _recover_warning(self, agent):
         async with self.warning_lock:
@@ -340,8 +526,22 @@ class Reliability:
                     continue
                 member.update(recovered=True, minutes=(member.get("elapsed_before", 0) + max(0, self.clock() - member["started"])) / 60)
                 group["needs_edit"] = True
-                if group["tier2_id"] is not None:
+                if member.get("escalated") and member.get("deaf_since") is not None:
+                    member["deaf_minutes"] = (self.clock() - member["deaf_since"]) / 60
+                # Recovery is announced when THIS member escalated (legacy
+                # journals only have the group-level tier2_id; members
+                # restored from them carry no "escalated" key at all).
+                if (member.get("escalated") or member.get("tier2_id") is not None
+                        or (group["tier2_id"] is not None and "escalated" not in member)):
                     group.setdefault("recovery_pending", []).append(agent)
+                # The episode is over: the next deaf episode for this agent
+                # may escalate again. tier2_id stays on the member so the
+                # recovery post can still reference the escalation.
+                member["escalated"] = False
+                entry = self.deaf_state.get(agent)
+                if entry is not None:
+                    entry["escalated"] = False
+                    entry["escalated_at"] = None
                 self._save_warnings()
                 self._metric("recovery", agent=agent, duration_seconds=member["minutes"] * 60,
                              message_id=group["message_id"], cause="", false_positive=None)
@@ -358,6 +558,13 @@ class Reliability:
                 group["needs_edit"] = False
                 self._save_warnings()
             if group.get("recovery_pending"):
-                await self._post_warning("Bridge recovered: " + ", ".join(group["recovery_pending"]))
+                parts = []
+                for agent in group["recovery_pending"]:
+                    deaf_minutes = group["members"].get(agent, {}).get("deaf_minutes")
+                    if deaf_minutes is not None:
+                        parts.append(f"{agent} (điếc {deaf_minutes:.1f} phút)")
+                    else:
+                        parts.append(agent)
+                await self._post_warning("Bridge recovered: " + ", ".join(parts))
                 group["recovery_pending"] = []
                 self._save_warnings()
