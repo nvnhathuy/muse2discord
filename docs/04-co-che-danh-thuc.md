@@ -21,7 +21,7 @@ Trong container hub, CLI `bridge` chỉ có **4 lệnh**, mọi lệnh kèm `BRI
 
 | Lệnh | Ý nghĩa |
 |---|---|
-| `bridge wait --agent <tên> --timeout 50` | Long-poll 50 giây: chờ tin được route tới agent; có tin thì trả JSON (tin + ngữ cảnh), hết giờ thì trả rỗng. |
+| `bridge wait --agent <tên> --timeout 30` | Long-poll 30 giây: chờ tin được route tới agent; có tin thì trả JSON (tin + ngữ cảnh), hết giờ thì trả rỗng. |
 | `bridge working --agent <tên> <id>` | **Ack mức 1**: báo đã nhận và đang làm; gia hạn lease +5 phút/lần, trần 30 phút. |
 | `bridge say --agent <tên> --reply-to <id> [--part N] [--final]` | Đăng trả lời (nội dung qua stdin). Bắt buộc `--reply-to` là tin **đã route tới đúng agent**. |
 | `bridge ack --agent <tên> <id>` | Đóng lặng một tin, không đăng gì. |
@@ -38,10 +38,10 @@ Quy tắc của `say` (rất quan trọng):
 
 Mỗi agent chạy **một** lính canh giống hệt nhau, chỉ thay danh tính (tên agent, khóa SSH, thư mục, proxy connector):
 
-1. Lính canh mở **một kết nối SSH duy nhất** tới hub host qua Tailscale. Phía xa chạy một vòng lặp: gọi `portainer_bridge.py wait --agent <tên> --timeout 50` liên tục (script này exec vào container hub qua Portainer trên LAN).
+1. Lính canh mở **một kết nối SSH duy nhất** tới hub host qua Tailscale. Phía xa chạy một vòng lặp: gọi `portainer_bridge.py wait --agent <tên> --timeout 30` liên tục (script này exec vào container hub qua Portainer trên LAN).
 2. Vòng lặp im lặng khi không có tin. Có tin: gọi `bridge working` cho tin đầu tiên, in JSON của đợt tin ra, rồi **kết thúc phiên SSH** — phiên kết thúc đánh thức agent.
 3. Agent xử lý đợt tin, trả lời qua hub, và **mở lại lính canh ngay trong cùng lượt**. Không có ngoại lệ: xử lý xong mà chưa mở lại là hở canh.
-4. Tuổi tối đa của một phiên canh là **2 giờ** (`SENTINEL_MAX_LIFE`) — hết tuổi thì thoát sạch để agent mở phiên mới. **3 lỗi vận chuyển liên tiếp** thì thoát với `SENTINEL_ERROR` để agent kiểm tra đường truyền trước khi mở lại.
+4. Tuổi tối đa của một phiên canh là **2 giờ** (`SENTINEL_MAX_LIFE`) — hết tuổi thì thoát sạch để agent mở phiên mới. Lính canh **không bao giờ chết vì lỗi vận chuyển**: lượt `wait` lỗi (hoặc phiên SSH gãy) chỉ làm giãn nhịp thử lại 15s → 30s → 60s (trần 60s), lượt chờ thành công đặt lại nhịp — lính canh phải sống sót qua các đợt hub khởi động lại/chuyển đổi dài tùy ý (bài học 22/11/2026: bản cũ thoát hẳn sau 3 lượt chờ lỗi lúc hub chuyển đổi ~2 phút, agent điếc tới khi có người mở lại tay).
 
 Không có supervisor, không có file trạng thái nào ngoài `hub_inbox.jsonl` (nơi lính canh ghi lại JSON đã bắt trước khi kết thúc, để đối chiếu sau khi runtime khởi động lại). Không dùng SSH ControlMaster: master kẹt ở bước tiền xác thực sẽ từ chối mọi phiên mux trong khi SSH thường vẫn chạy tốt.
 
