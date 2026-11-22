@@ -9,7 +9,7 @@ không triển khai lên hub đang chạy).
 ## Đã làm
 
 - Toàn bộ gói `hub_admin/` (Python stdlib thuần, không thêm dependency)
-  + trang `static/admin.html` một file + 29 test (`tests/`), chạy xanh
+  + trang `static/admin.html` một file + 40 test (`tests/`), chạy xanh
   bằng `python3 -m unittest discover -s tests` trên máy người dựng, kèm smoke
   test chạy thật `python3 -m hub_admin.app` (seed từ env mẫu, đăng nhập,
   overview, trang 200).
@@ -57,6 +57,41 @@ không triển khai lên hub đang chạy).
    đảo chiều tương ứng: `test_sensitive_ops_need_full_grant` (tầng mô
    hình) và `test_full_grant_is_admin_equivalent_but_cannot_issue_grants`
    (tầng API, kiểm cả 2 mặt).
+
+## Bổ sung vòng 10:01 ngày 22/11 (mật khẩu admin — 3 việc)
+
+- **Đổi mật khẩu trong trang**: mục "Tài khoản quản trị" — nhập mật
+  khẩu hiện tại + mật khẩu mới; sai mật khẩu hiện tại bị chặn (test có).
+  Mật khẩu lưu băm PBKDF2-SHA256 600k vòng (`hub_admin/credentials.py`),
+  không lưu thô ở bất cứ đâu. Đổi xong **huỷ mọi phiên khác**, giữ phiên
+  của người vừa đổi.
+- **Quên mật khẩu (đường chính, không SSH)**: admin tạo trước **mã khôi
+  phục** trong trang (hiện một lần, server chỉ giữ băm, tạo mã mới thì
+  mã cũ chết). Ở màn đăng nhập: nhập mã + mật khẩu mới → đặt lại xong
+  mã bị đốt (dùng lại lần 2 bị chặn — test có), mọi phiên cũ bị huỷ,
+  ghi audit `password_reset_recovery`. **Chỉnh theo chốt 10:07**: reset
+  thành công thì server **sinh ngay mã khôi phục MỚI** và trả về để
+  trang hiện một lần ở màn xác nhận — tài khoản không bao giờ trống mã
+  dự phòng; test kiểm đủ: mã mới dùng được, mã cũ không dùng lại được.
+- **Quên mật khẩu (dự phòng qua SSH, chính admin tự làm)**:
+  `python3 -m hub_admin.reset_password --state-dir <dir>` — hỏi mật
+  khẩu mới 2 lần (nhập ẩn), xong in xác nhận; kèm
+  `HUONG-DAN-RESET-MAT-KHAU.md` tiếng Việt từng bước (SSH vào → chạy
+  lệnh → đăng nhập lại → tạo mã khôi phục mới), toàn thông tin dạng
+  placeholder, không có địa chỉ máy nhà thật.
+- **Cơ chế huỷ phiên**: credentials có `version`, tăng mỗi lần đặt mật
+  khẩu; phiên đăng nhập đóng dấu version lúc login và tự chết ở lần
+  kiểm tra kế tiếp khi version lệch — nên cả 3 đường (đổi trong trang /
+  mã khôi phục / CLI) đều huỷ được phiên của tiến trình server đang
+  chạy mà không cần restart. Test CLI chạy cả hàm lẫn tiến trình con
+  thật (`python3 -m hub_admin.reset_password`).
+- **Ranh giới**: đổi mật khẩu và tạo mã khôi phục chỉ chấp nhận **phiên
+  của chính admin** — grant mức full cũng bị từ chối (test có), cùng
+  một đường ranh với việc cấp grant: thông tin xác thực của principal
+  quản trị là của riêng người admin.
+- Tương thích ngược: lần chạy đầu, nếu chưa có `admin_credentials.json`
+  mà có token quản trị cũ (env/file), app tự lấy token đó làm mật khẩu
+  ban đầu rồi chỉ dùng bản băm từ đó về sau.
 
 ## Kỷ luật đã tuân
 

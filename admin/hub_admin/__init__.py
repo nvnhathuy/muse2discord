@@ -14,6 +14,8 @@ __all__ = [
     "delivery",
     "journal",
     "auth",
+    "credentials",
+    "reset_password",
     "api",
     "app",
 ]

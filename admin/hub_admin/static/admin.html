@@ -29,10 +29,17 @@
 
 <section id="login-box" class="card">
   <h2>Đăng nhập quản trị</h2>
-  <label>Token quản trị <input id="login-token" type="password" size="40" autocomplete="off"></label>
+  <label>Mật khẩu quản trị <input id="login-token" type="password" size="40" autocomplete="off"></label>
   <button id="login-btn">Đăng nhập</button>
   <p class="muted">Hoặc dùng token quyền tạm (dành cho agent): dán vào ô trên rồi bấm “Đăng nhập bằng quyền tạm”.</p>
   <button id="login-grant-btn">Đăng nhập bằng quyền tạm</button>
+  <h3>Quên mật khẩu?</h3>
+  <p class="muted">Nhập mã khôi phục đã được cấp (mã chỉ dùng được 1 lần) và mật khẩu mới. Đặt lại xong mọi phiên đăng nhập cũ đều bị huỷ.</p>
+  <label>Mã khôi phục <input id="recover-code" type="text" size="30" autocomplete="off"></label>
+  <label>Mật khẩu mới (ít nhất 8 ký tự) <input id="recover-new" type="password" size="30" autocomplete="off"></label>
+  <button id="recover-btn">Đặt lại mật khẩu bằng mã khôi phục</button>
+  <div id="recover-issued"></div>
+  <p class="muted">Mất cả mã khôi phục? Dùng đường dự phòng qua SSH — xem file HUONG-DAN-RESET-MAT-KHAU.md trong gói.</p>
 </section>
 
 <main id="app" class="hidden">
@@ -79,6 +86,19 @@
     <h2>Cấu hình vận hành</h2>
     <div id="ops-box" class="muted">…</div>
     <button id="ops-save-btn">Lưu cấu hình (thao tác nhạy cảm)</button>
+  </section>
+
+  <section class="card" id="account-card">
+    <h2>Tài khoản quản trị</h2>
+    <h3>Đổi mật khẩu</h3>
+    <label>Mật khẩu hiện tại <input id="pw-current" type="password" size="30" autocomplete="off"></label>
+    <label>Mật khẩu mới (ít nhất 8 ký tự) <input id="pw-new" type="password" size="30" autocomplete="off"></label>
+    <button id="pw-change-btn">Đổi mật khẩu</button>
+    <p class="muted">Đổi xong, mọi phiên đăng nhập KHÁC đều bị huỷ; mật khẩu chỉ lưu dạng băm, không lưu thô.</p>
+    <h3>Mã khôi phục (dùng khi quên mật khẩu)</h3>
+    <button id="recovery-gen-btn">Tạo mã khôi phục mới</button>
+    <p class="muted">Mã chỉ hiện MỘT lần — hãy cất nơi an toàn. Tạo mã mới sẽ vô hiệu mã cũ. Mã dùng được 1 lần để đặt lại mật khẩu ngay tại màn đăng nhập.</p>
+    <div id="recovery-issued"></div>
   </section>
 
   <section class="card">
@@ -143,10 +163,27 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":
 // ---------------------------------------------------------------- login
 $("login-btn").onclick = async () => {
   try {
-    await api("POST", "/api/login", { token: $("login-token").value });
+    await api("POST", "/api/login", { password: $("login-token").value });
     grantToken = null;
     $("login-box").classList.add("hidden"); $("app").classList.remove("hidden");
     note("Đã đăng nhập quản trị."); refreshAll();
+  } catch (e) { note(e.message, true); }
+};
+$("recover-btn").onclick = async () => {
+  try {
+    const res = await fetch("/api/recover", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ recovery_code: $("recover-code").value.trim(), new_password: $("recover-new").value }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+    note("Đã đặt lại mật khẩu. Hãy đăng nhập bằng mật khẩu mới.");
+    if (data.recovery_code) {
+      $("recover-issued").innerHTML =
+        `<b>Mã khôi phục MỚI của bạn (chỉ hiện lần này — hãy cất ngay):</b> <code>${esc(data.recovery_code)}</code>` +
+        `<br><span class="muted">Mã cũ đã chết hẳn. Từ giờ dùng mã mới này nếu quên mật khẩu.</span>`;
+    }
+    $("recover-code").value = ""; $("recover-new").value = "";
   } catch (e) { note(e.message, true); }
 };
 $("login-grant-btn").onclick = async () => {
@@ -156,6 +193,7 @@ $("login-grant-btn").onclick = async () => {
     grantScope = data.identity ? data.identity.scope : null;
     $("login-box").classList.add("hidden"); $("app").classList.remove("hidden");
     $("grants-card").classList.add("hidden"); // grant admin stays admin-only
+    $("account-card").classList.add("hidden"); // password management is the human admin's own
     if (grantScope !== "full") $("ops-card").classList.add("hidden");
     note(`Đã vào bằng quyền tạm (phạm vi: ${grantScope}).`); refreshAll();
   } catch (e) { grantToken = null; grantScope = null; note(e.message, true); }
@@ -369,6 +407,24 @@ async function refreshAudit() {
     (e.grant_id ? ` · grant ${esc(e.grant_id)}` : "")).join("<br>") : "Chưa có bản ghi audit.";
 }
 $("audit-load-btn").onclick = () => { refreshAudit(); refreshJournal(); };
+
+// ---------------------------------------------------------------- account
+$("pw-change-btn").onclick = async () => {
+  try {
+    await api("POST", "/api/change-password", {
+      current_password: $("pw-current").value, new_password: $("pw-new").value });
+    $("pw-current").value = ""; $("pw-new").value = "";
+    note("Đã đổi mật khẩu. Các phiên đăng nhập khác đã bị huỷ.");
+  } catch (e) { note(e.message, true); }
+};
+$("recovery-gen-btn").onclick = async () => {
+  try {
+    const data = await api("POST", "/api/recovery-code", {});
+    $("recovery-issued").innerHTML =
+      `Mã khôi phục (chỉ hiện lần này, hãy cất ngay): <code>${esc(data.recovery_code)}</code>`;
+    refreshAudit();
+  } catch (e) { note(e.message, true); }
+};
 
 function refreshAll() { refreshAgents(); refreshGrants(); refreshOps(); refreshJournal(); refreshAudit(); }
 $("refresh-btn").onclick = refreshAll;

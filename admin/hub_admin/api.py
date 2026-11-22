@@ -38,10 +38,12 @@ DESCRIPTIVE_FIELDS = {"display_name", "role", "description", "notes", "bot_usern
 
 
 class Identity:
-    def __init__(self, kind: str, name: str, grant: Optional[Grant] = None):
+    def __init__(self, kind: str, name: str, grant: Optional[Grant] = None,
+                 session_id: Optional[str] = None):
         self.kind = kind  # "admin" | "agent"
         self.name = name  # "admin" | agent key holding the grant
         self.grant = grant
+        self.session_id = session_id
 
     @property
     def grant_id(self) -> Optional[str]:
@@ -61,6 +63,7 @@ class AdminApp:
         journal_path: str,
         status_provider: Optional[Callable[[], dict]] = None,
         static_dir: Optional[str] = None,
+        credentials=None,
     ):
         self.registry = registry
         self.secrets = secrets_store
@@ -75,6 +78,9 @@ class AdminApp:
             "online_bots": [], "expected_bots": [],
         })
         self.static_dir = static_dir or os.path.join(os.path.dirname(__file__), "static")
+        # AdminCredentials or None (None in legacy token-only setups:
+        # password endpoints then answer 501).
+        self.credentials = credentials
 
     # ------------------------------------------------------------------
     # identity / authorization
@@ -84,8 +90,9 @@ class AdminApp:
         for part in cookie.split(";"):
             part = part.strip()
             if part.startswith("admin_session="):
-                if self.auth.check_session(part.split("=", 1)[1]):
-                    return Identity("admin", "admin")
+                session_id = part.split("=", 1)[1]
+                if self.auth.check_session(session_id):
+                    return Identity("admin", "admin", session_id=session_id)
         authorization = headers.get("Authorization", "") or ""
         if authorization.startswith("Bearer "):
             grant = self.grants.authenticate(authorization[len("Bearer "):].strip())
@@ -285,6 +292,57 @@ class AdminApp:
                           {"grant_id": grant.id})
         return 200, {"grant": grant.public_dict()}
 
+    # ------------------------------------------------------------------
+    # admin password: change / recovery code / forgot-password reset
+    # Credential management belongs to the human admin's own session -
+    # never to a grant, not even a full one (same line as grant issuing).
+    # ------------------------------------------------------------------
+    def _require_credentials(self):
+        if self.credentials is None:
+            raise RuntimeError("password management is not configured on this deployment")
+        return self.credentials
+
+    def _require_admin_session(self, identity: Identity):
+        if identity.kind != "admin" or identity.session_id is None:
+            raise PermissionError("this action needs the admin's own session")
+
+    def change_password(self, identity: Identity, body: dict):
+        self._require_admin_session(identity)
+        credentials = self._require_credentials()
+        if not credentials.verify(body.get("current_password", "")):
+            raise PermissionError("current password is wrong")
+        credentials.set_password(body.get("new_password", ""))
+        # version bump kills every other session; keep the caller's own
+        self.auth.restamp_session(identity.session_id)
+        self.audit.record("admin", "change_password", "",
+                          {"sessions_invalidated": "all-others"})
+        return 200, {"ok": True}
+
+    def create_recovery_code(self, identity: Identity):
+        self._require_admin_session(identity)
+        credentials = self._require_credentials()
+        code = credentials.generate_recovery_code()
+        self.audit.record("admin", "create_recovery_code", "", {})
+        return 201, {"recovery_code": code}  # shown exactly once
+
+    def recover_password(self, body: dict):
+        """Forgot-password path from the login screen: recovery code +
+        new password. Public endpoint - the code IS the credential.
+        On success a FRESH recovery code is issued and returned once,
+        so the account is never left without a backup code (owner
+        decision 2026-11-22 10:07); the used code is dead for good."""
+        credentials = self._require_credentials()
+        if not credentials.consume_recovery_code(body.get("recovery_code", "")):
+            raise PermissionError("recovery code is wrong or already used")
+        credentials.set_password(body.get("new_password", ""))
+        self.auth.invalidate_all_sessions()
+        self.audit.record("admin", "password_reset_recovery", "",
+                          {"sessions_invalidated": "all"})
+        new_code = credentials.generate_recovery_code()
+        self.audit.record("admin", "create_recovery_code", "",
+                          {"via": "recovery_reset"})
+        return 200, {"ok": True, "recovery_code": new_code}  # shown exactly once
+
 
 # ----------------------------------------------------------------------
 # HTTP plumbing
@@ -338,11 +396,20 @@ def make_handler(app: AdminApp):
                 if path in ("/", "/admin") and method == "GET":
                     return self._send_page()
                 if path == "/api/login" and method == "POST":
-                    session = app.auth.login(self._body().get("token", ""))
+                    body = self._body()
+                    session = app.auth.login(body.get("password", body.get("token", "")))
                     if not session:
-                        return self._send_json(401, {"error": "invalid admin token"})
+                        return self._send_json(401, {"error": "invalid admin password"})
                     return self._send_json(200, {"ok": True}, {
                         "Set-Cookie": f"admin_session={session}; HttpOnly; Path=/; SameSite=Strict"})
+                if path == "/api/recover" and method == "POST":
+                    try:
+                        status, payload = app.recover_password(self._body())
+                    except PermissionError as exc:
+                        return self._send_json(403, {"error": str(exc)})
+                    except (ValueError, RuntimeError) as exc:
+                        return self._send_json(400, {"error": str(exc)})
+                    return self._send_json(status, payload)
                 identity = app.identify(self.headers)
                 if identity is None:
                     return self._send_json(401, {"error": "authentication required"})
@@ -350,7 +417,7 @@ def make_handler(app: AdminApp):
                 return self._send_json(status, payload)
             except PermissionError as exc:
                 return self._send_json(403, {"error": str(exc)})
-            except (RegistryError, ValueError, KeyError) as exc:
+            except (RegistryError, ValueError, KeyError, RuntimeError) as exc:
                 return self._send_json(400, {"error": str(exc)})
 
         @staticmethod
@@ -403,6 +470,10 @@ def make_handler(app: AdminApp):
                 return app.issue_grant(identity, body)
             if len(parts) == 3 and parts[:2] == ["api", "grants"] and method == "DELETE":
                 return app.revoke_grant(identity, parts[2])
+            if parts == ["api", "change-password"] and method == "POST":
+                return app.change_password(identity, body)
+            if parts == ["api", "recovery-code"] and method == "POST":
+                return app.create_recovery_code(identity)
             return 404, {"error": f"no route for {method} {path}"}
 
         do_GET = lambda self: self._dispatch("GET")

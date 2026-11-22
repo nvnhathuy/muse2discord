@@ -22,6 +22,14 @@ hub, đã chốt đủ 3 quyết định ở mục 10 ngày 22/11/2026):
   thời điểm cấp", giá trị nằm ở kho bí mật riêng (file 0600).
 - **Mọi thao tác ghi audit** append-only, gắn grant id khi agent làm
   bằng quyền tạm.
+- **Mật khẩu quản trị** (bổ sung 22/11): đổi ngay trong trang (nhập mật
+  khẩu hiện tại; đổi xong huỷ mọi phiên khác); quên mật khẩu thì dùng
+  **mã khôi phục hiện một lần** (chỉ lưu băm, dùng 1 lần, reset xong huỷ
+  mọi phiên + ghi audit); đường dự phòng là lệnh CLI trên máy chủ do
+  chính admin chạy — xem `HUONG-DAN-RESET-MAT-KHAU.md`. Mật khẩu lưu
+  dạng băm PBKDF2, không bao giờ lưu thô. Quản lý mật khẩu/mã khôi phục
+  chỉ dành cho phiên của chính admin — kể cả quyền tạm mức full cũng
+  không đụng được.
 
 ## Chạy thử
 
@@ -36,7 +44,7 @@ tính: `sample/sample.env`.
 ## Kiểm thử
 
 ```bash
-python3 -m unittest discover -s tests -v   # 29 test, chỉ dùng stdlib
+python3 -m unittest discover -s tests -v   # 40 test, chỉ dùng stdlib
 ```
 
 ## Cấu trúc
@@ -51,6 +59,8 @@ python3 -m unittest discover -s tests -v   # 29 test, chỉ dùng stdlib
 | `hub_admin/delivery.py` | Mô hình hàng chờ/lease/cursor theo đúng ngữ nghĩa hub |
 | `hub_admin/journal.py` | Thống kê journal + báo cáo chính sách giữ/xoay (mục 4.8) |
 | `hub_admin/auth.py` | Principal quản trị: phiên 30 phút + xác thực lại cho thao tác nhạy cảm |
+| `hub_admin/credentials.py` | Mật khẩu admin: băm PBKDF2, mã khôi phục dùng 1 lần, phiên bản mật khẩu để huỷ phiên |
+| `hub_admin/reset_password.py` | CLI đặt lại mật khẩu ngay trên máy chủ (đường dự phòng, admin tự chạy) |
 | `hub_admin/api.py` | HTTP API + phục vụ trang |
 | `hub_admin/static/admin.html` | Trang quản trị (một file, không phụ thuộc ngoài) |
 | `hub_admin/app.py` | Điểm chạy: nối các phần + di trú token env vào kho bí mật |

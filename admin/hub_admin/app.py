@@ -21,6 +21,7 @@ import os
 from .api import AdminApp, serve
 from .audit import AuditLog
 from .auth import AdminAuth
+from .credentials import AdminCredentials
 from .delivery import DeliveryState
 from .grants import GrantStore
 from .ops_config import OpsConfig
@@ -42,9 +43,23 @@ def build_app(state_dir: str) -> AdminApp:
         if env_token and not secrets_store.meta(profile.key)["configured"]:
             secrets_store.set(profile.key, env_token)
     ops = OpsConfig(os.path.join(state_dir, "ops_config.json"))
+    credentials = AdminCredentials(os.path.join(state_dir, "admin_credentials.json"))
+    if not credentials.exists:
+        # First boot: seed the password from the legacy admin token so
+        # existing deployments keep working; from then on only the
+        # PBKDF2 hash in admin_credentials.json is authoritative.
+        legacy = os.environ.get("HUB_ADMIN_TOKEN", "")
+        if not legacy:
+            token_file = os.path.join(state_dir, "admin_token.txt")
+            if os.path.exists(token_file):
+                with open(token_file, "r", encoding="utf-8") as fh:
+                    legacy = fh.read().strip()
+        if legacy:
+            credentials.set_password(legacy)
     auth = AdminAuth(
-        AdminAuth.load_token(file_path=os.path.join(state_dir, "admin_token.txt")),
+        credentials.verify,
         idle_seconds=int(ops.get("admin_session_idle_seconds")),
+        version_provider=credentials.version,
     )
     return AdminApp(
         registry=registry,
@@ -57,6 +72,7 @@ def build_app(state_dir: str) -> AdminApp:
             lease_max=int(ops.get("lease_max_seconds")),
         ),
         auth=auth,
+        credentials=credentials,
         journal_path=os.environ.get(
             "HUB_JOURNAL_PATH", os.path.join(state_dir, "bridge.jsonl")
         ),
