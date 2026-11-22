@@ -268,6 +268,16 @@ class ApiTests(unittest.TestCase):
         self.assertIn('autocomplete="username"', body)
         self.assertIn('autocomplete="current-password"', body)
 
+    def test_page_is_responsive(self):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        conn.request("GET", "/")
+        res = conn.getresponse()
+        body = res.read().decode("utf-8")
+        conn.close()
+        self.assertEqual(res.status, 200)
+        self.assertIn("@media", body)
+        self.assertIn("font-size: 16px", body)
+
 
 if __name__ == "__main__":
     unittest.main()

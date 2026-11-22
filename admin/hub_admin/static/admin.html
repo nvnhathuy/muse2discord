@@ -11,7 +11,7 @@
   table { border-collapse: collapse; width: 100%; font-size: .92rem; }
   th, td { border: 1px solid #8886; padding: .35rem .5rem; text-align: left; vertical-align: top; }
   button { cursor: pointer; margin: .1rem .15rem .1rem 0; }
-  input, select, textarea { margin: .15rem .3rem .15rem 0; max-width: 100%; }
+  input, select, textarea { margin: .15rem .3rem .15rem 0; max-width: 100%; font-size: 16px; }
   .card { border: 1px solid #8886; border-radius: 8px; padding: .8rem 1rem; margin: .6rem 0; }
   .muted { opacity: .75; font-size: .88rem; }
   .on { color: #1a7f37; font-weight: 600; } .off { color: #b42318; font-weight: 600; }
@@ -20,6 +20,14 @@
   #msg { min-height: 1.2em; }
   dialog { max-width: 560px; width: 92%; }
   label { display: block; font-size: .88rem; margin-top: .4rem; }
+  @media (max-width: 720px) {
+    button { min-height: 44px; }
+    input, select, textarea { width: 100%; }
+    section.card { overflow-x: auto; }
+    table { min-width: 540px; }
+    h1 { font-size: 1.2rem; } h2 { font-size: 1.05rem; }
+    dialog { width: 94%; }
+  }
 </style>
 </head>
 <body>
