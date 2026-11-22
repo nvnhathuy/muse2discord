@@ -53,6 +53,13 @@ class AgentProfile:
     # key itself lives in the VM's authorized_keys, never here.
     ssh_key_fingerprint: str = ""
     ssh_key_added_at: Optional[float] = None
+    # Confinement ("khoá trong hub"): a locked agent's hub-installed
+    # SSH key is fenced to bridge commands for its own agent key
+    # only, so the agent cannot wander the coordination VM through
+    # the door the hub gave it. New agents always start locked
+    # (owner decision 2026-11-22); the owner unlocks deliberately,
+    # per agent, from the admin page.
+    locked: bool = True
     notes: str = ""
     created_at: float = 0.0
     updated_at: float = 0.0
@@ -205,6 +212,7 @@ class AgentRegistry:
                 role=data.get("role", ""),
                 description=data.get("description", ""),
                 enabled=False,  # spec 4.2: new agents start paused
+                locked=True,  # owner decision 2026-11-22: locked in the hub by default
                 receive_deadline=data.get("receive_deadline"),
                 notes=data.get("notes", ""),
                 created_at=now,
@@ -243,6 +251,17 @@ class AgentRegistry:
             profile = self.get(key)
             profile.ssh_key_fingerprint = fingerprint
             profile.ssh_key_added_at = time.time()
+            profile.updated_at = time.time()
+            self._save()
+            return profile
+
+    def set_locked(self, key: str, locked: bool) -> AgentProfile:
+        """Set the agent's confinement state. Called ONLY after any
+        VM-side key refence succeeded (see api.set_agent_lock) - a
+        failed refence must leave the profile untouched."""
+        with self._lock:
+            profile = self.get(key)
+            profile.locked = bool(locked)
             profile.updated_at = time.time()
             self._save()
             return profile

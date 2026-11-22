@@ -1,0 +1,208 @@
+#!/usr/bin/env python3
+"""agent-bridge-gate — forced command for hub-installed agent SSH keys.
+
+Installed on the coordination VM at /usr/local/bin/agent-bridge-gate
+(root-owned). A "fenced" agent key in authorized_keys carries
+    command="/usr/local/bin/agent-bridge-gate <agentkey>",...
+so whatever the agent asks SSH to run, only this gate runs, and the
+agent identity is the one baked into the key line — unforgeable.
+
+The gate accepts exactly the two shapes the agent tooling uses:
+
+1. The sentinel wait loop: the common sentinel opens one SSH session
+   with the command  echo <b64> | base64 -d | bash  where <b64> is
+   the fixed remote-loop script. The gate decodes it and runs it
+   ONLY if it is byte-identical to the known loop template with the
+   key's own agent name in the two --agent spots.
+2. One-shot bridge calls of the form
+       python3 ~/portainer_bridge.py <sub> --agent <own> [flags]
+   with sub in {wait, say, ack, working, laws} and a strict
+   per-subcommand flag grammar (see _validate_oneshot). The gate
+   rebuilds the argv itself and injects --agent; a caller-supplied
+   --agent naming another agent is rejected.
+
+Everything else is denied (exit 1) and logged. The gate is the whole
+point of "khoá trong hub": the door the hub gave the agent opens
+only onto the agent's own bridge surface — no shell, no wandering
+the VM.
+"""
+import base64
+import os
+import re
+import shlex
+import subprocess
+import sys
+import time
+
+AGENT_RE = re.compile(r"^[a-z0-9_-]{1,32}$")
+ID_RE = re.compile(r"^[0-9]{1,25}$")
+B64_RE = re.compile(r"^[A-Za-z0-9+/]+={0,2}$")
+LOOP_CMD_RE = re.compile(r"^echo ([A-Za-z0-9+/=]+) \| base64 -d \| bash$")
+
+# The fixed remote loop the common sentinel ships (see the connect
+# prompt in the admin page). __AGENT__ is substituted with the key's
+# agent name; the decoded script must match byte for byte.
+LOOP_TEMPLATE = """START=$(date +%s); FAILS=0
+while :; do
+  NOW=$(date +%s)
+  if [ $((NOW - START)) -gt 7200 ]; then echo "SENTINEL_MAX_LIFE"; exit 0; fi
+  OUT=$(python3 ~/portainer_bridge.py wait --agent __AGENT__ --timeout 30 2>/dev/null)
+  RC=$?
+  if [ $RC -ne 0 ] || [ -z "$OUT" ]; then
+    FAILS=$((FAILS + 1))
+    if [ $FAILS -eq 1 ]; then sleep 15; elif [ $FAILS -eq 2 ]; then sleep 30; else sleep 60; fi
+    continue
+  fi
+  FAILS=0
+  HAS=$(printf '%s' "$OUT" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('messages',[])))" 2>/dev/null || echo 0)
+  if [ "$HAS" != "0" ]; then
+    FIRST=$(printf '%s' "$OUT" | python3 -c "import sys,json; print(json.load(sys.stdin)['messages'][0]['id'])" 2>/dev/null)
+    if [ -n "$FIRST" ]; then python3 ~/portainer_bridge.py working --agent __AGENT__ "$FIRST" >/dev/null 2>&1; fi
+    echo "$OUT"
+    exit 0
+  fi
+done"""
+
+
+def _log(agent: str, what: str) -> None:
+    path = os.environ.get("BRIDGE_GATE_LOG") or os.path.expanduser("~/.bridge-gate.log")
+    try:
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(f"{time.strftime('%Y-%m-%d %H:%M:%S %z')} agent={agent} {what}\n")
+    except OSError:
+        pass
+
+
+def _deny(agent: str, why: str) -> int:
+    _log(agent, f"DENY {why}")
+    print(f"agent-bridge-gate: denied ({why})", file=sys.stderr)
+    return 1
+
+
+def _wrapper() -> str:
+    return os.environ.get("BRIDGE_GATE_WRAPPER") or os.path.expanduser("~/portainer_bridge.py")
+
+
+def _number(text: str, lo: float, hi: float):
+    try:
+        value = float(text)
+    except (TypeError, ValueError):
+        return None
+    return value if lo < value <= hi else None
+
+
+def _validate_oneshot(agent: str, tokens: list) -> list | None:
+    """Validate one bridge call; return the argv to exec (without
+    the interpreter/wrapper prefix) or None to deny."""
+    if len(tokens) < 3:
+        return None
+    if tokens[0] not in ("python3", "/usr/bin/python3"):
+        return None
+    if not (tokens[1] in ("~/portainer_bridge.py", "$HOME/portainer_bridge.py")
+            or tokens[1].endswith("/portainer_bridge.py")):
+        return None
+    sub = tokens[2]
+    if sub not in ("wait", "say", "ack", "working", "laws"):
+        return None
+    rest = tokens[3:]
+    out = [sub]
+    i = 0
+    seen_agent = False
+    seen = set()
+
+    def take_flag(name):
+        nonlocal i
+        if i + 1 >= len(rest):
+            return None
+        value = rest[i + 1]
+        i += 2
+        seen.add(name)
+        return value
+
+    while i < len(rest):
+        tok = rest[i]
+        if tok == "--agent":
+            value = take_flag("--agent")
+            if value is None or value != agent or seen_agent:
+                return None
+            seen_agent = True
+        elif tok == "--timeout" and sub == "wait":
+            value = take_flag("--timeout")
+            if value is None or _number(value, 0, 3600) is None:
+                return None
+            out += ["--timeout", value]
+        elif tok == "--reply-to" and sub == "say":
+            value = take_flag("--reply-to")
+            if value is None or not ID_RE.match(value):
+                return None
+            out += ["--reply-to", value]
+        elif tok == "--part" and sub == "say":
+            value = take_flag("--part")
+            if value is None or not value.isdigit() or not (1 <= int(value) <= 99):
+                return None
+            out += ["--part", value]
+        elif tok == "--final" and sub == "say":
+            if "--final" in seen:
+                return None
+            seen.add("--final")
+            out.append("--final")
+            i += 1
+        elif tok == "--content-b64" and sub == "say":
+            value = take_flag("--content-b64")
+            if value is None or len(value) > 8192 or not B64_RE.match(value):
+                return None
+            out += ["--content-b64", value]
+        elif tok == "--eta" and sub == "working":
+            value = take_flag("--eta")
+            if value is None or _number(value, 0, 86400) is None:
+                return None
+            out += ["--eta", value]
+        elif ID_RE.match(tok) and sub in ("ack", "working") and "pos" not in seen:
+            seen.add("pos")
+            out.append(tok)
+            i += 1
+        else:
+            return None
+    if not seen_agent:
+        return None
+    if sub == "say" and ("--reply-to" not in seen or "--content-b64" not in seen):
+        return None
+    if sub == "ack" and "pos" not in seen:
+        return None
+    return ["python3", _wrapper()] + out[:1] + ["--agent", agent] + out[1:]
+
+
+def main() -> int:
+    if len(sys.argv) != 2 or not AGENT_RE.match(sys.argv[1]):
+        print("agent-bridge-gate: bad invocation", file=sys.stderr)
+        return 2
+    agent = sys.argv[1]
+    command = os.environ.get("SSH_ORIGINAL_COMMAND", "")
+
+    loop_match = LOOP_CMD_RE.match(command)
+    if loop_match:
+        try:
+            script = base64.b64decode(loop_match.group(1), validate=True).decode("utf-8")
+        except Exception:
+            return _deny(agent, "loop payload is not valid base64/utf-8")
+        expected = LOOP_TEMPLATE.replace("__AGENT__", agent)
+        if script.rstrip("\n") != expected.rstrip("\n"):
+            return _deny(agent, "loop script differs from the known template")
+        _log(agent, "ALLOW wait-loop")
+        proc = subprocess.run(["bash"], input=script, text=True)
+        return proc.returncode
+
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return _deny(agent, "unparseable command")
+    argv = _validate_oneshot(agent, tokens)
+    if argv is None:
+        return _deny(agent, "command outside the bridge grammar")
+    _log(agent, f"ALLOW {' '.join(argv[2:4])}")
+    proc = subprocess.run(argv)
+    return proc.returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -3,15 +3,27 @@
 # oneshot, triggered by agent-key-install.path watching the pending
 # file; see the units next to this script).
 #
-# For every pending line: re-validate from scratch (the pending file
-# is NOT trusted just because the intake wrote it), skip key blobs
-# already present in the operator's authorized_keys, append new keys
-# as "ssh-ed25519 <blob> hub-agent:<agentkey>", log every decision to
-# /var/log/agent-key-install.log, then clear the pending batch.
+# Pending line forms (tab-separated; written by agent-key-intake):
+#   key:  <agentkey> \t ssh-ed25519 <blob> \t <mode>
+#   mode: <agentkey> \t mode \t <mode>
+# Legacy 2-field key lines are accepted and mean mode "fenced".
+# <mode> is "fenced" or "open":
+#   fenced — the key lands in authorized_keys wrapped in a forced
+#     command (agent-bridge-gate) that only runs bridge commands
+#     for this agent: the agent is locked inside the hub and cannot
+#     wander the VM through the key the hub gave it.
+#   open — a plain login key, as before keydrop learned modes.
+# Every line is re-validated from scratch (the pending file is NOT
+# trusted just because the intake wrote it). A key blob already
+# present is left alone when its line already matches the wanted
+# mode, and rewritten in place when the mode differs. Mode lines
+# rewrite the options of the agent's existing line, keeping its
+# blob. Every decision is logged to /var/log/agent-key-install.log.
 set -u
 
 PENDING_FILE="${KEYDROP_PENDING_FILE:-/var/lib/keydrop/pending.tsv}"
 AUTH_OWNER="${KEYDROP_AUTH_OWNER:-debian}"
+GATE_PATH="${KEYDROP_GATE_PATH:-/usr/local/bin/agent-bridge-gate}"
 if [ -n "${KEYDROP_AUTH_KEYS:-}" ]; then
   AUTH_KEYS="$KEYDROP_AUTH_KEYS"
 else
@@ -23,6 +35,7 @@ fi
 LOG_FILE="${KEYDROP_LOG_FILE:-/var/log/agent-key-install.log}"
 AGENT_RE='^[a-z0-9_-]{1,32}$'
 KEY_RE='^ssh-ed25519 ([A-Za-z0-9+/]{40,}={0,3})$'
+MODE_RE='^(fenced|open)$'
 
 log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S %z')" "$*" >> "$LOG_FILE"; }
 
@@ -30,8 +43,34 @@ fingerprint() {
   python3 -c 'import base64,hashlib,sys; raw=base64.b64decode(sys.argv[1]); print("SHA256:"+base64.b64encode(hashlib.sha256(raw).digest()).decode().rstrip("="))' "$1" 2>/dev/null || echo "SHA256:?"
 }
 
-blob_present() {
-  awk -v blob="$1" '{ for (i=1;i<=NF;i++) if ($i==blob) { found=1; exit } } END { exit !found }' "$AUTH_KEYS"
+fence_prefix() { # $1 = agent key
+  printf 'command="%s %s",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ' "$GATE_PATH" "$1"
+}
+
+build_line() { # $1 = agent key, $2 = blob, $3 = mode
+  if [ "$3" = "fenced" ]; then
+    printf '%sssh-ed25519 %s hub-agent:%s' "$(fence_prefix "$1")" "$2" "$1"
+  else
+    printf 'ssh-ed25519 %s hub-agent:%s' "$2" "$1"
+  fi
+}
+
+line_with_blob() { # $1 = blob -> prints the authorized_keys line holding it
+  awk -v blob="$1" '{ for (i=1;i<=NF;i++) if ($i==blob) { print; exit } }' "$AUTH_KEYS"
+}
+
+line_for_agent() { # $1 = agent key -> prints its hub-agent line
+  awk -v tag="hub-agent:$1" '$NF==tag { print; exit }' "$AUTH_KEYS"
+}
+
+blob_of_line() { # $1 = line -> prints the blob after ssh-ed25519
+  printf '%s' "$1" | awk '{ for (i=1;i<=NF;i++) if ($i=="ssh-ed25519") { print $(i+1); exit } }'
+}
+
+replace_line() { # $1 = exact old line, $2 = new line (atomic rewrite)
+  local tmp="$AUTH_KEYS.tmp.$$"
+  awk -v old="$1" -v new="$2" 'BEGIN{d=0} { if (!d && $0==old) { print new; d=1 } else print }' \
+    "$AUTH_KEYS" > "$tmp" && mv "$tmp" "$AUTH_KEYS"
 }
 
 [ -f "$PENDING_FILE" ] || exit 0
@@ -46,24 +85,60 @@ fi
 mkdir -p "$(dirname "$AUTH_KEYS")"
 [ -f "$AUTH_KEYS" ] || touch "$AUTH_KEYS"
 
-while IFS=$'\t' read -r agent_key key_line; do
+while IFS=$'\t' read -r agent_key field2 field3; do
   [ -n "$agent_key" ] || continue
   if ! [[ $agent_key =~ $AGENT_RE ]]; then
     log "SKIP bad-agent-key agent=$agent_key"
     continue
   fi
-  if [[ $key_line =~ $KEY_RE ]]; then
+
+  if [ "$field2" = "mode" ]; then
+    # ---- mode line: re-fence the agent's existing key
+    if ! [[ $field3 =~ $MODE_RE ]]; then
+      log "SKIP bad-mode agent=$agent_key"
+      continue
+    fi
+    existing="$(line_for_agent "$agent_key")"
+    if [ -z "$existing" ]; then
+      log "SKIP mode-no-key agent=$agent_key mode=$field3"
+      continue
+    fi
+    blob="$(blob_of_line "$existing")"
+    desired="$(build_line "$agent_key" "$blob" "$field3")"
+    if [ "$existing" = "$desired" ]; then
+      log "SKIP mode-unchanged agent=$agent_key mode=$field3"
+    else
+      replace_line "$existing" "$desired"
+      log "MODE agent=$agent_key mode=$field3 fp=$(fingerprint "$blob")"
+    fi
+    continue
+  fi
+
+  # ---- key line (field3 = mode; legacy lines have none -> fenced)
+  if [[ $field2 =~ $KEY_RE ]]; then
     blob="${BASH_REMATCH[1]}"
   else
     log "SKIP bad-key agent=$agent_key"
     continue
   fi
-  if blob_present "$blob"; then
-    log "SKIP duplicate agent=$agent_key fp=$(fingerprint "$blob")"
+  mode="${field3:-fenced}"
+  if ! [[ $mode =~ $MODE_RE ]]; then
+    log "SKIP bad-mode agent=$agent_key"
     continue
   fi
-  printf 'ssh-ed25519 %s hub-agent:%s\n' "$blob" "$agent_key" >> "$AUTH_KEYS"
-  log "ADD agent=$agent_key fp=$(fingerprint "$blob")"
+  desired="$(build_line "$agent_key" "$blob" "$mode")"
+  existing="$(line_with_blob "$blob")"
+  if [ -n "$existing" ]; then
+    if [ "$existing" = "$desired" ]; then
+      log "SKIP duplicate agent=$agent_key fp=$(fingerprint "$blob")"
+    else
+      replace_line "$existing" "$desired"
+      log "REPLACE agent=$agent_key mode=$mode fp=$(fingerprint "$blob")"
+    fi
+    continue
+  fi
+  printf '%s\n' "$desired" >> "$AUTH_KEYS"
+  log "ADD agent=$agent_key mode=$mode fp=$(fingerprint "$blob")"
 done < "$work"
 
 chown "$AUTH_OWNER:" "$AUTH_KEYS" 2>/dev/null || true

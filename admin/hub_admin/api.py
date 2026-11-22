@@ -251,7 +251,9 @@ class AdminApp:
         profile = self.registry.get(key)  # must exist
         if self.keydrop is None:
             raise KeydropError("ssh key intake is not wired on this deployment")
-        fingerprint = self.keydrop.submit(key, body.get("public_key", ""))
+        fingerprint = self.keydrop.submit(
+            key, body.get("public_key", ""),
+            mode="fenced" if profile.locked else "open")
         profile = self.registry.record_ssh_key(key, fingerprint)
         self.audit.record(identity.name, "set_ssh_key", key,
                           {"fingerprint": fingerprint},
@@ -261,6 +263,34 @@ class AdminApp:
             "fingerprint": fingerprint,
             "ssh_key_added_at": profile.ssh_key_added_at,
         }
+
+    def set_agent_lock(self, identity: Identity, key: str, body: dict, headers):
+        """Lock / unlock an agent inside the hub (owner decision
+        2026-11-22: agents are locked by default when added).
+
+        Sensitive: admin session + step-up, or a full grant. Locking
+        confines the agent to its own bridge surface: if the agent
+        has a hub-installed SSH key, the key is re-fenced FIRST (a
+        transport failure is a 502 and leaves the profile untouched);
+        only then does the registry state change. Audited either way
+        it succeeds."""
+        self.authorize(identity, "set_agent_lock")
+        self.require_step_up(identity, headers)
+        locked = body.get("locked")
+        if not isinstance(locked, bool):
+            raise ValueError("locked must be a boolean")
+        profile = self.registry.get(key)  # must exist
+        if profile.locked == locked:
+            return 200, {"agent": self.registry.public_get(key)}
+        if profile.ssh_key_fingerprint:
+            if self.keydrop is None:
+                raise KeydropError("ssh key intake is not wired on this deployment")
+            self.keydrop.submit_mode(key, "fenced" if locked else "open")
+        profile = self.registry.set_locked(key, locked)
+        self.audit.record(identity.name, "set_agent_lock", key,
+                          {"locked": locked},
+                          grant_id=identity.grant_id)
+        return 200, {"agent": self.registry.public_get(key)}
 
     def queue(self, identity: Identity, key: str):
         self.authorize(identity, "view")
@@ -608,6 +638,8 @@ def make_handler(app: AdminApp):
                     return app.set_token(identity, key, body, headers)
                 if action == "ssh-key" and method == "POST":
                     return app.set_ssh_key(identity, key, body, headers)
+                if action == "lock" and method == "POST":
+                    return app.set_agent_lock(identity, key, body, headers)
                 if action == "queue" and method == "GET":
                     return app.queue(identity, key)
             if len(parts) == 5 and parts[:2] == ["api", "agents"] and parts[3] == "queue":

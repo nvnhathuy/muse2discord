@@ -31,7 +31,7 @@ intake "testagent
 $PUB
 "; rc=$?
 check "intake nhận key hợp lệ (rc=0)" test $rc -eq 0
-printf 'testagent\tssh-ed25519 %s\n' "$BLOB" > "$TMP/expected"
+printf 'testagent\tssh-ed25519 %s\tfenced\n' "$BLOB" > "$TMP/expected"
 check "pending đúng dạng agentkey<TAB>ssh-ed25519 blob (comment bị cắt)" \
   cmp -s "$TMP/expected" "$KEYDROP_PENDING_FILE"
 
@@ -60,13 +60,13 @@ check "pending không đổi sau mọi payload rác" test "$(pending_sum)" = "$b
 # ------------------------------------------------------------ install
 bash ./agent-key-install; rc=$?
 check "installer chạy xong (rc=0)" test $rc -eq 0
-check "authorized_keys có key với comment hệ thống hub-agent:<key>" \
-  grep -qxF "ssh-ed25519 $BLOB hub-agent:testagent" "$KEYDROP_AUTH_KEYS"
+check "authorized_keys có key BỊ RÀO (fenced) với comment hub-agent:<key>" \
+  grep -qxF "command=\"/usr/local/bin/agent-bridge-gate testagent\",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ssh-ed25519 $BLOB hub-agent:testagent" "$KEYDROP_AUTH_KEYS"
 check "authorized_keys có quyền 600" \
   test "$(stat -c %a "$KEYDROP_AUTH_KEYS")" = "600"
 check "pending đã bị xoá sau khi cài" test ! -f "$KEYDROP_PENDING_FILE"
 check "log có dòng ADD kèm fingerprint" \
-  grep -q "ADD agent=testagent fp=SHA256:" "$KEYDROP_LOG_FILE"
+  grep -q "ADD agent=testagent mode=fenced fp=SHA256:" "$KEYDROP_LOG_FILE"
 
 # Chống trùng: nộp lại đúng key đó, cài lại — vẫn chỉ 1 dòng.
 intake "testagent
@@ -85,7 +85,69 @@ printf 'DONG RAC KHONG HOP LE\nsecondagent\tssh-ed25519 %s\n' "$BLOB2" \
   > "$KEYDROP_PENDING_FILE"
 bash ./agent-key-install
 check "installer bỏ qua dòng rác, vẫn cài dòng tốt" \
-  grep -qxF "ssh-ed25519 $BLOB2 hub-agent:secondagent" "$KEYDROP_AUTH_KEYS"
+  grep -qxF "command=\"/usr/local/bin/agent-bridge-gate secondagent\",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ssh-ed25519 $BLOB2 hub-agent:secondagent" "$KEYDROP_AUTH_KEYS"
+
+
+# ------------------------------------------------------------- mode lines
+intake "testagent
+mode:open
+"; rc=$?
+check "intake nhận mode line (rc=0)" test $rc -eq 0
+bash ./agent-key-install
+check "mode open: key thành khoá thường (hết rào)" \
+  grep -qxF "ssh-ed25519 $BLOB hub-agent:testagent" "$KEYDROP_AUTH_KEYS"
+check "log có dòng MODE mode=open" \
+  grep -q "MODE agent=testagent mode=open" "$KEYDROP_LOG_FILE"
+intake "testagent
+mode:fenced
+"
+bash ./agent-key-install
+check "mode fenced: key bị rào lại" \
+  grep -qxF "command=\"/usr/local/bin/agent-bridge-gate testagent\",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ssh-ed25519 $BLOB hub-agent:testagent" "$KEYDROP_AUTH_KEYS"
+intake "ghostagent
+mode:open
+"
+bash ./agent-key-install
+check "mode cho agent chưa có key bị bỏ qua (SKIP mode-no-key)" \
+  grep -q "SKIP mode-no-key agent=ghostagent" "$KEYDROP_LOG_FILE"
+
+# ------------------------------------------------------------- gate
+export HOME="$TMP"
+export BRIDGE_GATE_LOG="$TMP/gate.log"
+cat > "$TMP/portainer_bridge.py" <<'STUB'
+import json, sys
+if len(sys.argv) > 1 and sys.argv[1] == "wait":
+    print('{"messages": [{"id": "123"}]}')
+else:
+    print("WRAPPER " + json.dumps(sys.argv[1:]))
+STUB
+LOOP_B64="$(python3 -c "
+import base64, importlib.util
+spec = importlib.util.spec_from_loader('gate', loader=None)
+src = open('./agent-bridge-gate').read()
+ns = {}
+exec(compile(src.split('def _log')[0], 'gate', 'exec'), ns)
+script = ns['LOOP_TEMPLATE'].replace('__AGENT__', 'testagent')
+print(base64.b64encode(script.encode()).decode())
+")"
+OUT="$(SSH_ORIGINAL_COMMAND="echo $LOOP_B64 | base64 -d | bash" python3 ./agent-bridge-gate testagent 2>/dev/null)"
+check "gate cho qua wait-loop đúng mẫu của chính agent" \
+  test "${OUT#*\"messages\"}" != "$OUT"
+LOOP_B64_OTHER="${LOOP_B64}"
+OUT="$(SSH_ORIGINAL_COMMAND="echo $LOOP_B64 | base64 -d | bash" python3 ./agent-bridge-gate otheragent 2>/dev/null)"
+check "gate chặn wait-loop của agent khác" test -z "$OUT"
+OUT="$(SSH_ORIGINAL_COMMAND="cat /etc/passwd" python3 ./agent-bridge-gate testagent 2>/dev/null)"
+check "gate chặn lệnh shell lạ" test -z "$OUT"
+OUT="$(SSH_ORIGINAL_COMMAND="python3 ~/portainer_bridge.py say --agent testagent --reply-to 123 --final --content-b64 aGVsbG8=" python3 ./agent-bridge-gate testagent 2>/dev/null)"
+check "gate cho qua say one-shot đúng ngữ pháp" \
+  test "${OUT#*WRAPPER}" != "$OUT"
+OUT="$(SSH_ORIGINAL_COMMAND="python3 ~/portainer_bridge.py say --agent otheragent --reply-to 123 --final --content-b64 aGVsbG8=" python3 ./agent-bridge-gate testagent 2>/dev/null)"
+check "gate chặn say giả danh agent khác" test -z "$OUT"
+OUT="$(SSH_ORIGINAL_COMMAND="python3 ~/portainer_bridge.py laws --agent testagent" python3 ./agent-bridge-gate testagent 2>/dev/null)"
+check "gate cho qua laws của chính agent" \
+  test "${OUT#*WRAPPER}" != "$OUT"
+OUT="$(SSH_ORIGINAL_COMMAND="python3 ~/portainer_bridge.py wait --agent testagent --timeout 30; rm -rf /" python3 ./agent-bridge-gate testagent 2>/dev/null)"
+check "gate chặn lệnh ghép bằng dấu chấm phẩy" test -z "$OUT"
 
 echo
 echo "keydrop tests: $pass ok, $fail fail"

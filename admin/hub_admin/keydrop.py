@@ -134,15 +134,13 @@ class KeydropClient:
         os.chmod(path, 0o600)
         return path
 
-    def submit(self, agent_key: str, public_key: str) -> str:
-        """Validate and ship one agent key. Returns its fingerprint.
+    MODES = ("fenced", "open")
 
-        Raises ValueError for a malformed key/agent key (caller maps
-        to 400) and KeydropError for any transport problem (caller
-        maps to 502; nothing has been recorded in that case)."""
-        if not AGENT_KEY_RE.match(agent_key or ""):
-            raise ValueError(f"invalid agent key: {agent_key!r}")
-        normalized, fingerprint = validate_public_key(public_key)
+    def _ship(self, payload: str) -> None:
+        """Send one keydrop payload to the VM intake over SSH.
+
+        Raises KeydropError on any transport problem; the caller
+        records nothing in that case."""
         if not self.target:
             raise KeydropError(
                 "HUB_KEYDROP_TARGET is not configured on this deployment")
@@ -159,7 +157,6 @@ class KeydropClient:
             "-o", f"UserKnownHostsFile={os.path.join(self.state_dir, 'keydrop_known_hosts')}",
             self.target,
         ]
-        payload = f"{agent_key}\n{normalized}\n"
         try:
             rc, stderr = self._runner(argv, payload, 20)
         except subprocess.TimeoutExpired:
@@ -168,6 +165,37 @@ class KeydropClient:
             raise KeydropError(f"could not run ssh: {exc}") from None
         if rc != 0:
             raise KeydropError(
-                f"keydrop intake refused the key (ssh rc={rc})"
+                f"keydrop intake refused the submission (ssh rc={rc})"
                 + (f": {stderr}" if stderr else ""))
+
+    def submit(self, agent_key: str, public_key: str, mode: str = "fenced") -> str:
+        """Validate and ship one agent key. Returns its fingerprint.
+
+        The key is installed on the VM in the given mode: "fenced"
+        (the default) restricts it to bridge commands for this agent
+        only; "open" installs a plain login key. The mode follows the
+        agent's confinement state ("locked" in the registry).
+
+        Raises ValueError for a malformed key/agent key/mode (caller
+        maps to 400) and KeydropError for any transport problem
+        (caller maps to 502; nothing has been recorded in that case)."""
+        if not AGENT_KEY_RE.match(agent_key or ""):
+            raise ValueError(f"invalid agent key: {agent_key!r}")
+        if mode not in self.MODES:
+            raise ValueError(f"invalid key mode: {mode!r}")
+        normalized, fingerprint = validate_public_key(public_key)
+        self._ship(f"{agent_key}\n{normalized}\n{mode}\n")
         return fingerprint
+
+    def submit_mode(self, agent_key: str, mode: str) -> None:
+        """Re-fence an already-installed key after a lock toggle.
+
+        Ships a mode-only submission; the VM-side install rewrites
+        the options of the agent's existing authorized_keys line and
+        keeps its key blob. Raises ValueError/KeydropError like
+        submit()."""
+        if not AGENT_KEY_RE.match(agent_key or ""):
+            raise ValueError(f"invalid agent key: {agent_key!r}")
+        if mode not in self.MODES:
+            raise ValueError(f"invalid key mode: {mode!r}")
+        self._ship(f"{agent_key}\nmode:{mode}\n")

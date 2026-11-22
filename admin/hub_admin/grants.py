@@ -40,6 +40,7 @@ SENSITIVE_OPS = {
     "delete_agent",
     "set_bot_token",
     "set_ssh_key",
+    "set_agent_lock",
     "reset_cursor",
     "ack_on_behalf",
     "force_release_bulk",
