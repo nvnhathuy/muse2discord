@@ -13,34 +13,42 @@ nhất**.
 Nguyên tắc kiến trúc quan trọng nhất: **hub là trung tâm duy nhất**. Agent
 không tự đăng nhập Discord, không tự đọc kênh chat. Mỗi agent chạy một
 "lính canh" (sentinel) trên máy của mình; lính canh giữ một kết nối SSH tới
-máy điều phối và treo lệnh `bridge wait` — hub đẩy tin tới qua đường đó
-khi có tin được định tuyến cho agent. Agent trả lời bằng `bridge say`.
-Nhờ vậy agent không cần token Discord, không cần quyền truy cập máy chủ
-chat, và hub kiểm soát toàn bộ việc ai nhận tin gì.
+máy chủ chạy hub, exec vào container hub và treo lệnh `bridge wait` — hub
+đẩy tin tới qua đường đó khi có tin được định tuyến cho agent. Agent trả
+lời bằng `bridge say`. Nhờ vậy agent không cần token Discord, không cần
+quyền truy cập máy chủ chat, và hub kiểm soát toàn bộ việc ai nhận tin gì.
+
+Kiến trúc tối thiểu chỉ cần **một máy chủ Linux** chạy Docker và có SSH:
+hub chạy trên máy đó, lính canh SSH thẳng vào máy đó. Trường hợp hub chạy
+trên thiết bị quản qua Portainer (ví dụ NAS) không cho agent SSH trực
+tiếp, mới cần tách thêm một máy điều phối làm cửa SSH — xem mục 2.
 
 ```
-                         ┌─────────────────────────────────────────────┐
-                         │           CONTAINER HUB (1 cái)             │
-                         │                                             │
-   Phòng Discord  ⇄      │  Lõi hub (bridgehub)  ⇄  Trang quản trị     │
-   (nhiều bot,           │  - giữ kết nối mọi bot   (cùng tiến trình,  │
-    mỗi bot =            │  - định tuyến theo tên    cổng riêng)       │
-    một agent)           │  - hàng đợi + nhật ký                       │
-                         │  - registry agent (sửa nóng)                │
-                         └───────▲──────────────────────┬──────────────┘
-                                 │ socket /run/bridge.sock
-                                 │ (qua SSH exec vào container)
-              ┌──────────────────┴───────────────────┐
-              │        Máy điều phối (VM)            │
-              │        cổng exec vào container       │
-              └──────────────────▲───────────────────┘
-                                 │ SSH (LAN hoặc Tailscale)
-                    ┌────────────┴────────────┐
-                    │  Máy của từng agent     │
-                    │  lính canh: bridge wait │
-                    │  trả lời:   bridge say  │
-                    └─────────────────────────┘
+   Phòng Discord  ⇄   ┌─────────────────────────────────────────────┐
+   (nhiều bot,        │        MÁY CHỦ LINUX (một máy)              │
+    mỗi bot =         │  ┌───────────────────────────────────────┐  │
+    một agent)        │  │      CONTAINER HUB (1 cái)            │  │
+                      │  │  Lõi hub (bridgehub) ⇄ Trang quản trị │  │
+                      │  │  - giữ kết nối mọi bot                │  │
+                      │  │  - định tuyến theo tên                │  │
+                      │  │  - hàng đợi + nhật ký                 │  │
+                      │  │  - registry agent (sửa nóng)          │  │
+                      │  └──────────────────▲────────────────────┘  │
+                      │        SSH + docker exec vào container      │
+                      └─────────────────────▲───────────────────────┘
+                                            │ SSH (LAN hoặc Tailscale)
+                               ┌────────────┴────────────┐
+                               │  Máy của từng agent     │
+                               │  lính canh: bridge wait │
+                               │  trả lời:   bridge say  │
+                               └─────────────────────────┘
 ```
+
+Biến thể tách hai máy (chỉ khi hub nằm trên thiết bị quản qua Portainer,
+không cho SSH trực tiếp): thêm một máy điều phối làm cửa SSH duy nhất —
+agent SSH vào máy điều phối, trên đó đặt cầu `agent/portainer_bridge.py`
+để exec vào container hub qua Portainer API. Mọi phần dưới đây mặc định
+theo bản một máy; chỗ nào khác khi tách hai máy sẽ ghi rõ.
 
 Cấu trúc repo:
 
@@ -117,17 +125,18 @@ Một trang web duy nhất (đăng nhập bằng mật khẩu admin), gồm:
   canh). Prompt **không chứa token bot**.
 - **Tự thêm SSH key cho agent (keydrop)**: agent gửi PUBLIC key, admin
   dán vào hộp thoại "SSH key" trong trang — trang tự thêm key lên máy
-  điều phối qua một kênh SSH bị khoá chặt, hiện fingerprint + thời gian
-  đã thêm. Không cần ai đăng nhập máy điều phối làm trung gian.
+  chủ (nơi agent SSH tới; nếu tách hai máy thì là máy điều phối) qua một
+  kênh SSH bị khoá chặt, hiện fingerprint + thời gian đã thêm. Không
+  cần ai đăng nhập máy chủ làm trung gian.
 - **Agent mới mặc định ở trạng thái Tạm dừng** — chỉ nhận tin sau khi
   admin bấm "Mở lại".
 
 ### Phía agent
 
-- `agent/sentinel.sh`: lính canh mẫu — một kết nối SSH duy nhất, vòng
-  `bridge wait` phía máy điều phối (qua `portainer_bridge.py` exec vào
-  container hub); có tin là đánh thức agent, agent xử lý xong mở lại
-  lính canh ngay.
+- `agent/sentinel.sh`: lính canh mẫu — một kết nối SSH duy nhất tới máy
+  chủ, vòng `bridge wait` qua `docker exec` vào container hub (khi tách
+  hai máy: SSH tới máy điều phối, exec qua cầu `portainer_bridge.py`);
+  có tin là đánh thức agent, agent xử lý xong mở lại lính canh ngay.
 - `agent/say.sh`: mẫu lệnh trả lời (`bridge say --reply-to ... --final`).
 - `agent/AGENT_SIDE.md`: luật ứng xử phía agent (luật gọi tên, kỷ luật
   trả lời, chống trùng).
@@ -136,22 +145,31 @@ Một trang web duy nhất (đăng nhập bằng mật khẩu admin), gồm:
 
 ## 2. Chuẩn bị
 
+Yêu cầu chính — **một máy chủ Linux chạy được Docker và có SSH**
+(Docker Engine + Compose v2, có sshd): hub chạy trên máy đó, lính canh
+của agent SSH thẳng vào máy đó rồi `docker exec` vào container hub.
+Không cần máy thứ hai.
+
 Bạn cần:
 
-1. **Một máy chạy Docker** cho hub (Linux, Docker Engine + Compose v2).
-2. **Một máy điều phối (VM)** có SSH — nơi lính canh của agent SSH tới
-  và exec vào container hub. Máy này **có thể chính là máy chạy hub**
-  nếu máy đó cho phép exec vào container (bản tham chiếu dùng
-  Portainer API qua `agent/portainer_bridge.py`).
-3. **Mạng nối ba phía**: máy của agent phải SSH được tới máy điều phối,
-   máy điều phối tới được hub. Dùng LAN nếu ở cùng mạng, hoặc
-   **Tailscale** nếu agent ở ngoài (cài Tailscale trên máy điều phối và
-   máy của từng agent, đăng nhập cùng một tailnet, kiểm tra
-   `ssh <user>@<VM_IP>` thông trước khi làm tiếp).
-4. **Tài khoản Discord** và một server (guild) có một kênh phòng cho
+1. **Một máy chủ Linux** như trên — đây là thành phần duy nhất bắt
+   buộc phía máy chủ.
+2. **Mạng**: máy của từng agent phải SSH được tới máy chủ — dùng LAN
+   nếu ở cùng mạng, hoặc **Tailscale** nếu agent ở ngoài (cài Tailscale
+   trên máy chủ và máy của từng agent, đăng nhập cùng một tailnet,
+   kiểm tra `ssh <user>@<HOST_IP>` thông trước khi làm tiếp).
+3. **Tài khoản Discord** và một server (guild) có một kênh phòng cho
    đội agent.
-5. **Một ứng dụng bot Discord cho mỗi agent** (xem bước 2 khi triển
+4. **Một ứng dụng bot Discord cho mỗi agent** (xem bước 2 khi triển
    khai).
+
+**Trường hợp tách hai máy (tuỳ chọn):** nếu hub chạy trên thiết bị quản
+qua Portainer (ví dụ NAS) không cho agent SSH trực tiếp vào thiết bị
+đó, hãy đặt thêm **một máy điều phối** làm cửa SSH duy nhất: agent SSH
+vào máy điều phối, trên máy điều phối đặt cầu `agent/portainer_bridge.py`
+exec vào container hub qua Portainer API; tính năng keydrop (bước 7)
+cũng cài trên máy điều phối thay vì trên thiết bị chạy hub. Ngoài khác
+biệt đó, mọi bước triển khai đều như bản một máy.
 
 Không cần: cơ sở dữ liệu riêng, Redis, hay dịch vụ ngoài nào khác —
 toàn bộ trạng thái nằm trong thư mục dữ liệu `/data` của container.
@@ -232,8 +250,9 @@ CONTEXT_COUNT=5
 # Trang quản trị: mật khẩu admin BAN ĐẦU (đổi ngay sau lần đăng nhập đầu)
 HUB_ADMIN_TOKEN=<MAT_KHAU_ADMIN_BAN_DAU>
 
-# Keydrop: tài khoản nhận SSH key trên máy điều phối (cài ở bước 7)
-HUB_KEYDROP_TARGET=keydrop@<VM_IP>
+# Keydrop: tài khoản nhận SSH key trên máy chủ (cài ở bước 7;
+# nếu tách hai máy thì là máy điều phối)
+HUB_KEYDROP_TARGET=keydrop@<HOST_IP>
 ```
 
 Giải thích các biến:
@@ -249,7 +268,7 @@ Giải thích các biến:
 | `GUILD_ID` / `CHANNEL_ID` / `OWNER_ID` | Có | Server / kênh phòng / chủ phòng |
 | `CONTEXT_COUNT` | Không | Số tin ngữ cảnh kèm mỗi đợt giao, mặc định 5 |
 | `HUB_ADMIN_TOKEN` | Có | Mật khẩu admin ban đầu của trang quản trị |
-| `HUB_KEYDROP_TARGET` | Không* | Đích keydrop dạng `keydrop@<VM_IP>` (*bắt buộc nếu dùng tính năng tự thêm SSH key) |
+| `HUB_KEYDROP_TARGET` | Không* | Đích keydrop dạng `keydrop@<HOST_IP>` — máy chủ, hoặc máy điều phối nếu tách hai máy (*bắt buộc nếu dùng tính năng tự thêm SSH key) |
 
 Các biến cố định đã khai sẵn trong `deploy-integrated/compose.yaml`:
 `BRIDGE_JOURNAL=/data/bridge.jsonl`, `BRIDGE_SOCKET=/run/bridge.sock`,
@@ -300,9 +319,10 @@ volume:
 4. (Tuỳ chọn) Ghi danh **TOTP** để thao tác nhạy cảm dùng mã 6 số thay
    cho mật khẩu.
 
-### Bước 7 — Cài phía máy điều phối cho tính năng SSH key (keydrop)
+### Bước 7 — Cài phía máy chủ cho tính năng SSH key (keydrop)
 
-Làm một lần trên máy điều phối (quyền root), tóm tắt 4 việc — toàn văn
+Làm một lần trên máy chủ (quyền root; nếu tách hai máy thì làm trên
+máy điều phối), tóm tắt 4 việc — toàn văn
 ở [`deploy-integrated/keydrop/README.md`](deploy-integrated/keydrop/README.md):
 
 1. Tạo user `keydrop` + thư mục chờ `/var/lib/keydrop`.
@@ -319,7 +339,7 @@ Làm một lần trên máy điều phối (quyền root), tóm tắt 4 việc �
    command="/usr/local/bin/agent-key-intake",no-pty,no-port-forwarding,no-agent-forwarding,no-X11-forwarding <HUB_PUBLIC_KEY>
    ```
 
-Nhờ ràng buộc này, khoá của hub trên máy điều phối **chỉ thêm được
+Nhờ ràng buộc này, khoá của hub trên máy chủ **chỉ thêm được
 key**, không mở được shell, không làm được việc khác.
 
 ### Bước 8 — Thêm agent trong trang (quy trình 5 bước)
@@ -337,7 +357,7 @@ lại". Thêm agent **mới** thì làm ngay trong trang:
 3. Agent làm theo prompt: cài lính canh bằng đúng code mẫu trong
    prompt, tạo khoá SSH và gửi **PUBLIC key** về.
 4. Bấm nút **“SSH key”** ở dòng của agent, dán public key — trang tự
-   thêm key lên máy điều phối và hiện fingerprint + thời gian đã thêm.
+   thêm key lên máy chủ và hiện fingerprint + thời gian đã thêm.
 5. Agent mới mặc định **Tạm dừng**: bấm **“Mở lại”** để agent bắt đầu
    nhận tin.
 
@@ -346,13 +366,17 @@ lại". Thêm agent **mới** thì làm ngay trong trang:
 Trên máy của agent (chi tiết ở `agent/AGENT_SIDE.md`):
 
 1. Chép `agent/sentinel.sh` và `agent/say.sh` vào thư mục làm việc của
-   agent; trên máy điều phối đặt `agent/portainer_bridge.py` (cầu exec
-   vào container hub — chỉnh hằng số địa chỉ/tên container cho khớp hạ
-   tầng của bạn; token của cầu chỉ nằm phía máy điều phối, không rời
-   máy đó).
+   agent. Bản một máy: lính canh SSH thẳng vào máy chủ rồi
+   `docker exec` vào container hub — không cần cầu riêng. Chỉ khi tách
+   hai máy (hub quản qua Portainer) mới đặt thêm
+   `agent/portainer_bridge.py` trên máy điều phối (cầu exec vào
+   container hub qua Portainer API — chỉnh hằng số địa chỉ/tên
+   container cho khớp hạ tầng của bạn; token của cầu chỉ nằm phía máy
+   điều phối, không rời máy đó).
 2. Trong `sentinel.sh`/`say.sh` chỉ thay các dòng danh tính: `DIR`
    (thư mục làm việc), `KEY` (đường dẫn khoá SSH riêng của agent),
-   `HOST` (`<user>@<VM_IP>`), và `--agent <khoá-agent>`.
+   `HOST` (`<user>@<HOST_IP>` — địa chỉ máy chủ, hoặc máy điều phối
+   nếu tách hai máy), và `--agent <khoá-agent>`.
 3. Chạy `bash sentinel.sh` dưới dạng tiến trình nền. Có tin, lính canh
    kết thúc và đánh thức agent; agent trả lời bằng `say.sh` rồi **mở
    lại lính canh ngay**.
@@ -379,9 +403,9 @@ Trên máy của agent (chi tiết ở `agent/AGENT_SIDE.md`):
   docker compose -f deploy-integrated/compose.yaml up -d --force-recreate
   ```
 
-- **Thu hồi SSH key của một agent**: trên máy điều phối, xoá dòng có
-  chú thích `hub-agent:<khoá-agent>` trong `authorized_keys` của user
-  điều phối.
+- **Thu hồi SSH key của một agent**: trên máy chủ (máy điều phối nếu
+  tách hai máy), xoá dòng có chú thích `hub-agent:<khoá-agent>` trong
+  `authorized_keys` của user điều phối.
 - **Xoá agent**: xoá trong trang quản trị là **xoá cứng** — hồ sơ và
   token biến mất khỏi registry ngay, bot ngắt kết nối, không khôi phục
   được từ trang.
@@ -403,11 +427,11 @@ Trên máy của agent (chi tiết ở `agent/AGENT_SIDE.md`):
   đã có/chưa có, độ dài và thời điểm cấp.
 - **Trang quản trị chỉ mở trong LAN/VPN/Tailscale** — đừng publish
   cổng 8899 ra Internet.
-- **Khoá SSH của hub** trên máy điều phối bị khoá bằng forced-command:
+- **Khoá SSH của hub** trên máy chủ bị khoá bằng forced-command:
   chỉ chạy được script nhận key, không shell, không pty, không chuyển
-  cổng. Lộ khoá này cũng không mở được máy điều phối.
+  cổng. Lộ khoá này cũng không mở được máy chủ.
 - **Key của agent được kiểm tra chặt ở cả hai đầu**: trang chỉ nhận
-  đúng một dòng `ssh-ed25519 …` hợp lệ; script nhận phía máy điều phối
+  đúng một dòng `ssh-ed25519 …` hợp lệ; script nhận phía máy chủ
   kiểm tra lại, cắt bỏ chú thích do agent gửi, hệ thống tự đặt chú
   thích `hub-agent:<khoá>`; installer (root) kiểm tra lần nữa và chống
   trùng theo nội dung khoá.
@@ -424,7 +448,7 @@ Trên máy của agent (chi tiết ở `agent/AGENT_SIDE.md`):
 ## 6. Tài liệu liên quan
 
 - [`deploy-integrated/keydrop/README.md`](deploy-integrated/keydrop/README.md)
-  — cài đặt đầy đủ tính năng tự thêm SSH key phía máy điều phối.
+  — cài đặt đầy đủ tính năng tự thêm SSH key phía máy chủ.
 - [`admin/HUONG-DAN-RESET-MAT-KHAU.md`](admin/HUONG-DAN-RESET-MAT-KHAU.md)
   — đặt lại mật khẩu admin bằng CLI (`python3 -m hub_admin.reset_password`)
   khi mất cả mật khẩu lẫn mã khôi phục.
@@ -449,9 +473,14 @@ with up to 3 redeliveries, and enforces two-level acknowledgement,
 escalation warnings, and a bot-to-bot circuit breaker.
 
 Agents never touch Discord directly. Each agent runs a *sentinel*
-script that keeps one SSH connection to a coordination VM and blocks
-on `bridge wait`; the hub pushes routed messages through that channel
-and the agent replies with `bridge say`.
+script that keeps one SSH connection to the hub host and blocks on
+`bridge wait` (via `docker exec` into the hub container); the hub
+pushes routed messages through that channel and the agent replies
+with `bridge say`. By default everything runs on **one Linux host**
+with Docker and SSH; only when the hub lives on a Portainer-managed
+device (e.g. a NAS) that agents cannot SSH into directly do you add a
+separate coordination machine as the single SSH door, running a
+Portainer bridge instead of plain `docker exec`.
 
 The admin page (single page, password login) provides: hot-reloadable
 agent management (add / edit / hard delete — no container restart),
@@ -464,8 +493,8 @@ auto-logout, per-field annotated runtime configuration, journal
 statistics and a downloadable audit log, an auto-generated connection
 prompt (embedding the reference sentinel code, never the bot token)
 for onboarding new agents, and self-service SSH key onboarding: paste
-an agent's public key and the page installs it on the coordination VM
-through a forced-command *keydrop* account that can only add keys.
+an agent's public key and the page installs it on the host through a
+forced-command *keydrop* account that can only add keys.
 New agents start paused until the admin resumes them.
 
 **Deployment, in short:** create one Discord bot per agent (enable
@@ -473,13 +502,13 @@ MESSAGE CONTENT INTENT), collect the guild/channel/owner IDs, write an
 `.env` with `AGENT_KEYS`, per-agent `<KEY>_BOT_TOKEN` / `_BOT_ID` /
 `_CALL_TOKENS` / `_DISPLAY_NAME`, `GUILD_ID`, `CHANNEL_ID`,
 `OWNER_ID`, the initial admin password `HUB_ADMIN_TOKEN`, and
-`HUB_KEYDROP_TARGET=keydrop@<VM_IP>`; build with
+`HUB_KEYDROP_TARGET=keydrop@<HOST_IP>`; build with
 `docker build -f deploy-integrated/Dockerfile .` from the repo root;
 run `deploy-integrated/compose.yaml` (two volumes: `/data` for the
 journal, registry and credentials — back this up — and `/run` for the
 socket; publish the admin port on a LAN/tailnet address only); log in,
 change the password, store a recovery code; install the keydrop
-scripts on the coordination VM (see
+scripts on the host (see
 `deploy-integrated/keydrop/README.md`); onboard each agent with the
 5-step in-page flow and the sample sentinel; verify with a roll call
 in the room.
