@@ -171,12 +171,89 @@
   </form>
 </dialog>
 
+<dialog id="prompt-box">
+  <h2 id="prompt-title">Prompt kết nối</h2>
+  <p class="muted">Gửi prompt này cho agent (chép rồi dán vào phiên của agent) để agent tự kết nối và hoạt động. Prompt KHÔNG chứa token bot — hub giữ token. Có thể sửa nội dung trước khi chép.</p>
+  <textarea id="prompt-text" rows="18" style="width:100%"></textarea>
+  <p>
+    <button id="prompt-copy-btn" type="button">Chép prompt</button>
+    <button id="prompt-close-btn" type="button">Đóng</button>
+    <span id="prompt-copy-status" class="muted"></span>
+  </p>
+</dialog>
+
+<script type="text/plain" id="sentinel-template">
+#!/bin/bash
+# Hub v2 sentinel (template — shown for agent key "deputy"; replace it with
+# your own agent key): ONE persistent SSH connection to the hub host running a
+# remote loop of `bridge wait --agent deputy --timeout 50` (via
+# ~/portainer_bridge.py on the hub host, which execs into the discord-hub-v2
+# container through Portainer). No ControlMaster (a stuck pre-auth master
+# refuses all mux requests).
+# The remote loop stays silent on empty waits; on the first non-empty wait it
+# calls `bridge working` for the first message, prints the JSON and ends the
+# SSH session — the local process exit is what wakes the agent. Exits also on
+# SENTINEL_ERROR (3 consecutive transport failures) or SENTINEL_MAX_LIFE (2h).
+set -u
+DIR="$HOME/workspace/discord-bridge-agent"
+KEY="$HOME/.ssh/agent_discord_bridge"
+HOST="operator@<TAILSCALE_IP>"
+
+REMOTE=$(cat <<'EOF'
+START=$(date +%s); FAILS=0
+while :; do
+  NOW=$(date +%s)
+  if [ $((NOW - START)) -gt 7200 ]; then echo "SENTINEL_MAX_LIFE"; exit 0; fi
+  OUT=$(python3 ~/portainer_bridge.py wait --agent deputy --timeout 50 2>/dev/null)
+  RC=$?
+  if [ $RC -ne 0 ] || [ -z "$OUT" ]; then
+    FAILS=$((FAILS + 1))
+    if [ $FAILS -ge 3 ]; then echo "SENTINEL_ERROR"; exit 2; fi
+    sleep 5; continue
+  fi
+  FAILS=0
+  HAS=$(printf '%s' "$OUT" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('messages',[])))" 2>/dev/null || echo 0)
+  if [ "$HAS" != "0" ]; then
+    FIRST=$(printf '%s' "$OUT" | python3 -c "import sys,json; print(json.load(sys.stdin)['messages'][0]['id'])" 2>/dev/null)
+    if [ -n "$FIRST" ]; then python3 ~/portainer_bridge.py working --agent deputy "$FIRST" >/dev/null 2>&1; fi
+    echo "$OUT"
+    exit 0
+  fi
+done
+EOF
+)
+B64=$(printf '%s' "$REMOTE" | base64 -w0)
+
+OUT=$(timeout 7260 ssh -i "$KEY" -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+  -o ConnectTimeout=25 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+  -o "ProxyCommand=python3 $DIR/connect_via_proxy.py %h %p" \
+  "$HOST" "echo $B64 | base64 -d | bash" 2>/tmp/agent_sentinel_ssh_err.txt)
+RC=$?
+case "$OUT" in
+  *'"messages"'*)
+    printf '%s\n' "$OUT" >> "$DIR/hub_inbox.jsonl"
+    echo "$OUT"
+    exit 0
+    ;;
+  *SENTINEL_MAX_LIFE*)
+    echo "SENTINEL_MAX_LIFE"
+    exit 0
+    ;;
+  *)
+    echo "SENTINEL_ERROR rc=$RC out=$OUT"
+    cat /tmp/agent_sentinel_ssh_err.txt
+    exit 2
+    ;;
+esac
+</script>
+
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
 let grantToken = null; // when logged in via a temporary grant
 let grantScope = null; // scope of that grant, from /api/overview
 let totpEnabled = false; // step-up mode, from /api/overview identity
+let lastAgents = []; // roster from the latest /api/overview (for prompt building)
 const canSensitive = () => !grantToken || grantScope === "full";
 
 function note(text, isError) {
@@ -259,6 +336,7 @@ async function refreshAgents() {
       ? "TOTP đang BẬT: thao tác nhạy cảm cần mã 6 số trong ứng dụng xác thực."
       : "TOTP chưa ghi danh: thao tác nhạy cảm tạm dùng mật khẩu nhập lại. Nên ghi danh TOTP.";
   }
+  lastAgents = data.agents || [];
   const hub = data.hub || {};
   $("hub-status").textContent =
     `Hub: ${hub.ready ? "sẵn sàng" : "chưa sẵn sàng"}${hub.recovering ? " (đang khôi phục)" : ""} · ` +
@@ -283,6 +361,7 @@ async function refreshAgents() {
     if (a.enabled) mk("Tạm dừng", () => pauseAgent(a));
     else mk("Mở lại", () => resumeAgent(a));
     mk("Sửa", () => openAgentDialog(a));
+    mk("Prompt kết nối", () => showConnectPrompt(a));
     mk("Hàng chờ", () => { $("queue-agent").value = a.key; loadQueue(); });
     if (canSensitive()) {
       mk("Thay token", () => setToken(a));
@@ -318,6 +397,63 @@ async function deleteAgent(a) {
   catch (e) { note(e.message, true); }
 }
 
+// ------------------------------------------------------- connect prompt
+// Build the onboarding prompt for one agent from non-secret registry
+// fields only (key, display name, bot id, call tokens). The bot token is
+// held by the hub and is never read here, so it can never leak into the
+// generated prompt.
+function buildConnectPrompt(a, roster) {
+  const rosterLines = (roster || []).map((x) => `- ${x.key} — ${x.display_name}`).join("\n");
+  const callTokens = (a.call_tokens || []).join(", ");
+  const sentinel = document.getElementById("sentinel-template").textContent
+    .trim().split("deputy").join(a.key);
+  return `Bạn là agent mới trong phòng Discord của đội. Thông tin của bạn:
+- Khoá agent (dùng cho mọi lệnh bridge): ${a.key}
+- Tên hiển thị: ${a.display_name}
+- Bot Discord id: ${a.bot_id || ""}
+- Từ khoá gọi bạn: ${callTokens}
+- Danh sách cả phòng (khoá — tên):
+${rosterLines}
+
+Cách kết nối (kiến trúc bắt buộc): hub là trung tâm duy nhất; bạn KHÔNG tự vào Discord đọc tin. Tin được hub đẩy tới bạn qua lính canh: một script vòng lặp chạy trên máy của bạn, gọi lệnh \`bridge wait --agent ${a.key} --timeout 30\` bên trong container hub (đường vào: SSH tới VM điều phối của đội rồi exec vào container hub qua cầu Portainer — nếu máy bạn chưa có bộ dụng cụ này, hãy báo chủ phòng cấp gói lính canh mẫu chuẩn thay vì tự chế đường khác). Nhận tin từ wait → xử lý → trả lời bằng \`bridge say --agent ${a.key} --reply-to <id tin>\` (chỉ trả lời được tin đã được hub giao cho bạn; trả lời nhiều phần dùng --part, xong việc dùng --final; đã --final thì không say thêm).
+
+Dùng NGUYÊN code mẫu lính canh dưới đây, chỉ thay khoá agent là của bạn — không tự viết lại lính canh.
+
+\`\`\`bash
+${sentinel}
+\`\`\`
+
+Các giá trị phụ thuộc máy của bạn — điền theo máy của bạn trước khi chạy:
+- HOST trong code: thay <TAILSCALE_IP> bằng địa chỉ Tailscale của VM điều phối, và user SSH (operator@) bằng user của bạn trên VM đó.
+- KEY: đường dẫn khoá SSH riêng của máy bạn (xem bước khoá SSH ở mục Việc đầu tiên).
+- DIR: thư mục trên máy bạn chứa bộ dụng cụ này (lính canh và connect_via_proxy.py đặt cạnh nhau; portainer_bridge.py chạy trên VM — máy bạn chưa có cả gói thì báo chủ phòng cấp gói mẫu chuẩn).
+
+Luật phòng (bắt buộc):
+1. Chỉ lên tiếng khi được gọi đúng luật: dấu " ngay trước tên bạn, @mention bạn, hoặc "tất cả". Không được gọi thì im lặng.
+2. Mọi câu trả lời mở đầu bằng <phản hồi trong Xs> với X là số giây ĐO THẬT từ lúc tin tới; cấm bịa số liệu dưới mọi hình thức.
+3. Trước khi xử lý một tin, tự kiểm tra mình đã làm việc đó chưa; đã làm rồi thì chỉ ack lặng, không đăng lại bài trùng.
+4. Chậm quá 60 giây: nếu do hub thì mention giám đốc phòng kèm lý do; nếu do phía bạn thì mention giám đốc phòng kèm lý do + phương án sửa, chờ duyệt mới sửa.
+5. Agent mới đang ở trạng thái Tạm dừng phía hub cho tới khi chủ phòng Mở lại — nếu wait không thấy tin, đừng tự kết luận hub hỏng.
+
+Việc đầu tiên của bạn (theo đúng thứ tự):
+1. Nếu máy bạn chưa có khoá SSH riêng, tạo một cặp khoá ed25519 cho riêng việc nối hub.
+2. Gửi PUBLIC key của bạn về cho chủ phòng (trong câu trả lời cho prompt này) — TUYỆT ĐỐI không gửi private key. Chủ phòng dán key của bạn vào trang quản trị, và trang tự thêm key vào authorized_keys trên VM điều phối.
+3. Chờ xác nhận "đã thêm khoá" rồi mới khởi động vòng lính canh; trước đó đường cầu sẽ chưa thông, đừng tự kết luận hub lỗi.
+4. Cài lính canh theo mẫu chuẩn ở trên, mở vòng wait, rồi chờ điểm danh trong phòng và trả lời xác nhận "${a.display_name} đã nhận, sẵn sàng".`;
+}
+function showConnectPrompt(a) {
+  $("prompt-title").textContent = `Prompt kết nối — ${a.display_name}`;
+  $("prompt-text").value = buildConnectPrompt(a, lastAgents);
+  $("prompt-copy-status").textContent = "";
+  $("prompt-box").showModal();
+}
+$("prompt-copy-btn").onclick = async () => {
+  try { await navigator.clipboard.writeText($("prompt-text").value); }
+  catch (e) { $("prompt-text").select(); document.execCommand("copy"); }
+  $("prompt-copy-status").textContent = "Đã chép prompt.";
+};
+$("prompt-close-btn").onclick = () => $("prompt-box").close();
+
 // ---------------------------------------------------------------- dialog
 function openAgentDialog(a) {
   const isNew = !a;
@@ -352,17 +488,24 @@ function openAgentDialog(a) {
       notes: $("f-notes").value.trim(),
     };
     try {
+      let createdKey = null;
       if (isNew) {
         payload.key = $("f-key").value.trim();
         const token = $("f-token").value.trim();
         if (token) payload.bot_token = token;
         await api("POST", "/api/agents", payload);
         note("Đã thêm agent (đang tạm dừng).");
+        createdKey = payload.key;
       } else {
         await api("PATCH", `/api/agents/${a.key}`, payload);
         note("Đã lưu.");
       }
-      $("agent-dialog").close(); refreshAgents();
+      $("agent-dialog").close();
+      await refreshAgents();
+      if (createdKey) {
+        const created = lastAgents.find((x) => x.key === createdKey);
+        if (created) showConnectPrompt(created);
+      }
     } catch (e) { note(e.message, true); }
   };
 }

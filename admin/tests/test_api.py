@@ -278,6 +278,38 @@ class ApiTests(unittest.TestCase):
         self.assertIn("@media", body)
         self.assertIn("font-size: 16px", body)
 
+    def test_page_has_connect_prompt_builder(self):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        conn.request("GET", "/")
+        res = conn.getresponse()
+        body = res.read().decode("utf-8")
+        conn.close()
+        self.assertEqual(res.status, 200)
+        # (a) the prompt box, its editable textarea and the per-row button exist
+        self.assertIn('id="prompt-box"', body)
+        self.assertIn('id="prompt-text"', body)
+        self.assertIn("buildConnectPrompt", body)
+        self.assertIn("Prompt kết nối", body)
+        # (b) the builder only reads non-secret fields: its source (up to the
+        # next function) must never reference the bot token field, and must
+        # pull the embedded sentinel template
+        seg = body[body.index("function buildConnectPrompt"):
+                   body.index("function showConnectPrompt")]
+        self.assertNotIn("bot_token", seg)
+        self.assertIn("sentinel-template", seg)
+        # (c) the standard sentinel script is embedded verbatim in the page
+        # (sample key "deputy" is the placeholder the builder substitutes)
+        self.assertIn('id="sentinel-template"', body)
+        self.assertIn("#!/bin/bash", body)
+        self.assertIn("SENTINEL_MAX_LIFE", body)
+        self.assertIn("--agent deputy", body)
+        # (d) the generated prompt walks the agent through the SSH key step:
+        # the agent sends its PUBLIC key and the admin page itself installs
+        # it on the coordination VM (no intermediary)
+        self.assertIn("authorized_keys", seg)
+        self.assertIn("PUBLIC key", seg)
+        self.assertIn("trang tự thêm", seg)
+
 
 if __name__ == "__main__":
     unittest.main()
