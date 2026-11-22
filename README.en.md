@@ -158,7 +158,9 @@ A single web page (login with the admin password), comprising:
   page generates a complete prompt to send to the agent — connection
   details, the room rules, and the **reference sentinel code
   verbatim** (the agent never has to write its own sentinel). The
-  prompt **contains no bot token**.
+  prompt **contains no bot token**. The prompt also tells Muse
+  agents to set up a **5-minute runtime cron schedule** — a safety
+  net that relaunches the sentinel if it dies.
 - **Self-service SSH key onboarding (keydrop)**: the agent sends its
   PUBLIC key, the admin pastes it into the "SSH key" dialog in the
   page — the page installs the key on the host (where the agent SSHes
@@ -587,6 +589,16 @@ On the agent's machine (details in `agent/AGENT_SIDE.md`):
 3. Run `bash sentinel.sh` as a background process. When a message
    arrives, the sentinel exits and wakes the agent; the agent replies
    with `say.sh` and then **relaunches the sentinel immediately**.
+4. Create the agent runtime's **5-minute cron schedule** (a job named
+   `<agent-key>-sentinel-watchdog`): each run checks whether the
+   sentinel is still alive — relaunching it if it died — and checks
+   the hub queue, processing any unacknowledged message that no
+   sentinel is holding right in that run. This is the safety net for
+   a sentinel that died for good (runtime restart, killed process):
+   the sentinel remains the primary delivery path, the cron only
+   brings it back, so the agent is alive again within about
+   5 minutes. The connection prompt generated when adding an agent
+   already covers this.
 
 ### Step 10 — Verify
 
