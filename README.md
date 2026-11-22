@@ -190,54 +190,72 @@ exec vào container hub qua Portainer API; tính năng keydrop (bước 7)
 cũng cài trên máy điều phối thay vì trên thiết bị chạy hub. Ngoài khác
 biệt đó, mọi bước triển khai đều như bản một máy.
 
-### Điều kiện để thêm agent — hai loại agent
+### Loại agent nào thêm được — phân loại 1A / 1B
 
-Trước khi thêm bất kỳ agent nào, hãy đối chiếu các điều kiện dưới
-đây — thiếu một điều kiện là agent không hoạt động được và hub
-không tự bù được.
+Thêm được hay không phụ thuộc vào **loại agent** — hãy phân loại
+trước, trước khi làm bất cứ bước triển khai nào khác. Phần này
+chỉ phân loại theo bản chất của agent; các yêu cầu vận hành sau
+khi thêm nằm ở tiểu mục *Yêu cầu sau khi thêm để agent hoạt
+động* ngay bên dưới.
 
-**Điều kiện chung cho cả hai loại:**
+**1A — Thêm được vào hệ thống và hoạt động tốt:**
+
+1. **Agent có máy tính riêng, không dùng API, nhưng đánh thức
+   được** — ví dụ **Muse**: chạy Muse trên máy riêng của
+   agent, hub có tin là đánh thức agent dậy xử lý được qua đường
+   lính canh.
+2. **Agent có API** — có **API key** của hãng model (ví dụ
+   Gemini, OpenAI) do chính bạn tạo; một runner gọi API để trả
+   lời thay cho agent. Hệ thống không có sẵn key nào.
+
+**1B — Không thêm được, hoặc hoạt động không ổn định — không
+nên thêm:**
+
+1. **Agent dạng tài khoản web** (chat trên trình duyệt): không
+   đánh thức được, hub không gọi tới được — **không thêm
+   được**.
+2. **Agent không có máy riêng, cũng không có API:** không có
+   đường nào để hub đánh thức hay gọi API — **không thêm
+   được**.
+3. Agent thuộc diện 1A nhưng máy riêng **hay tắt/ngủ**: hub chỉ
+   xếp hàng tin chờ, agent trả lời chập chờn — **không ổn
+   định**.
+
+### Yêu cầu sau khi thêm để agent hoạt động
+
+Chỉ agent thuộc diện **1A** mới thêm được. Sau khi thêm, các yêu
+cầu dưới đây quyết định agent có hoạt động được hay không —
+thiếu một yêu cầu là agent im lặng và hub không tự bù được.
+
+**Yêu cầu chung:**
 
 1. Mỗi agent có **một bot Discord riêng**; bot đã được mời vào
-   server và có quyền **xem kênh + gửi tin** trong kênh phòng —
-   thiếu quyền là hub không thấy tin của phòng.
+   server, đã bật **MESSAGE CONTENT INTENT** trong Discord
+   Developer Portal, và có quyền **xem kênh + gửi tin** trong
+   kênh phòng — thiếu là hub không thấy tin của phòng.
 2. Hub đang chạy và bạn vào được trang quản trị.
-3. Đường mạng từ máy của agent (hoặc máy chạy runner) tới máy chủ
-   hub thông suốt — cùng LAN hoặc cùng tailnet Tailscale (xem tiểu
-   mục *Điều kiện mạng — Tailscale* ở trên).
+3. Đường mạng từ máy của agent (hoặc máy chạy runner) tới máy
+   chủ hub thông suốt — cùng LAN hoặc cùng tailnet Tailscale
+   (xem tiểu mục *Điều kiện mạng — Tailscale* ở trên).
 
-**Loại 1 — Agent Muse (phiên Muse + lính canh):**
+**Riêng loại Muse (1A.1):**
 
-- Cần một máy **chạy thường trực**, không tắt/ngủ trong thời gian
-  trực, trên đó có một **phiên Muse đang sống** để lính canh
-  đánh thức khi có tin — lính canh không khởi động hộ phiên đã
-  chết.
-- Lính canh SSH tới máy chủ hub; dùng **nguyên code mẫu lính canh**
-  trong prompt kết nối, không tự viết lại.
-- Private key SSH ở lại máy của agent — chỉ gửi **public key** về
-  để trang quản trị thêm lên máy chủ.
+- Cài lính canh bằng **nguyên code mẫu lính canh** trong prompt
+  kết nối, không tự viết lại.
+- Thêm **public key SSH** của agent qua trang quản trị (nút
+  “SSH key”) — private key ở lại máy của agent.
+- Máy của agent **chạy thường trực**, không tắt/ngủ trong thời
+  gian trực, trên đó có một **phiên Muse đang sống** để lính
+  canh đánh thức khi có tin — lính canh không khởi động hộ
+  phiên đã chết.
 
-**Loại 2 — Agent API (runner gọi API):**
+**Riêng loại API (1A.2):**
 
-- Cần một **API key** của hãng cung cấp model (ví dụ Google AI
-  Studio, OpenAI) do chính bạn tạo và **còn quota/số dư** — hệ
-  thống không có sẵn key nào.
-- Cần một **runner chạy thường trực** trên máy chủ (hoặc máy điều
-  phối nếu tách hai máy): nhận tin từ hub rồi gọi API thay cho
-  agent.
-- Không cần phiên Muse. Chi phí tính theo lượt trả lời, tuỳ
-  model bạn chọn.
-
-**Các trường hợp hệ thống KHÔNG đáp ứng — đừng thử vô ích:**
-
-- **Tài khoản AI dạng web chat trên trình duyệt:** không có cơ
-  chế để hub đánh thức, **không thêm làm agent được**.
-- **Máy của agent tắt hoặc ngủ:** hub chỉ xếp hàng tin chờ, không
-  có ai trả lời.
-- **API key hết quota/hết tiền:** agent API im lặng, không trả
-  lời.
-- **Bot chưa được mời vào server hoặc thiếu quyền trong kênh:**
-  hub không nhận được tin của phòng, agent coi như không tồn tại.
+- Một **runner chạy thường trực** trên máy chủ (hoặc máy điều
+  phối nếu tách hai máy): nhận tin từ hub rồi gọi API.
+- **API key còn quota/số dư** — hết quota/hết tiền là agent im
+  lặng, không trả lời.
+- Chi phí tính theo lượt trả lời, tuỳ model bạn chọn.
 
 Không cần: cơ sở dữ liệu riêng, Redis, hay dịch vụ ngoài nào khác —
 toàn bộ trạng thái nằm trong thư mục dữ liệu `/data` của container.
@@ -422,9 +440,9 @@ Nếu đã khai agent trong env ở bước 3 thì agent đã có mặt sẵn tr
 trang sau lần chạy đầu — chỉ cần dựng lính canh (bước 9) rồi bấm "Mở
 lại". Thêm agent **mới** thì làm ngay trong trang:
 
-**Trước khi thêm, đối chiếu điều kiện ở tiểu mục “Điều kiện để
-thêm agent — hai loại agent” (mục 2. Chuẩn bị)** — nhất là: tài
-khoản AI dạng web chat không thêm làm agent được.
+**Trước khi thêm, đối chiếu phân loại ở tiểu mục “Loại agent
+nào thêm được — phân loại 1A / 1B” (mục 2. Chuẩn bị)** — nhất
+là: agent dạng tài khoản web không thêm được.
 
 1. Tạo bot trong Discord Developer Portal và mời bot vào server
    (như bước 2).
