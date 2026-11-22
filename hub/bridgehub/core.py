@@ -165,6 +165,11 @@ class Hub(Reliability):
         self.routing_gate = None
         self.registry_watcher = None
         self.bot_lifecycle = None
+        # API-agent executor hook (issue #22): called with
+        # (agent_key, message) whenever a message is enqueued for an
+        # agent; the executor itself decides whether the agent is an
+        # API agent it should answer for. None = feature not wired.
+        self.api_delivery_hook = None
         self._loop = None  # captured by __main__ for the admin-thread ops
         self.journal = Journal(config.journal_path)
         self.sources = {}
@@ -364,6 +369,13 @@ class Hub(Reliability):
         self._start_typing(agent)
         if react:
             self.spawn(self._effect("react", agent, message.id))
+        if self.api_delivery_hook is not None:
+            try:
+                self.api_delivery_hook(agent, message)
+            except Exception:
+                # The hook belongs to the API-agent executor; its
+                # failure must never break enqueueing for anyone.
+                log.warning("api delivery hook failed agent=%s", agent)
 
     async def ingest(self, message):
         snowflake(message.id)
