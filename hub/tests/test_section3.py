@@ -150,17 +150,20 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         redelivery = (await self.hub.wait("lead", 0))["messages"][0]
         self.assertTrue(redelivery["had_ack1"])
         await self.restart()
-        self.clock.advance(181)
+        # After the restart rebase, first_at is the restart time and the
+        # message already used R1, so R2 falls due at +300 (1/5/15 schedule).
+        self.clock.advance(300)
         await self.hub.sweep()
         self.assertEqual((await self.hub.wait("lead", 0))["messages"][0]["redelivered"], 2)
 
     async def test_three_redeliveries_then_suspect_does_not_block_next_message(self):
         await self.deliver()
-        for count in (1, 2, 3):
-            self.clock.advance(181)
+        # Redelivery schedule is now fixed at minutes 1/5/15 from first_at.
+        for advance_by, count in ((60, 1), (240, 2), (600, 3)):
+            self.clock.advance(advance_by)
             await self.hub.sweep()
             self.assertEqual((await self.hub.wait("lead", 0))["messages"][0]["redelivered"], count)
-        self.clock.advance(181)
+        self.clock.advance(60)
         await self.hub.sweep()
         self.assertIn("1000", self.hub.suspects["lead"])
         await self.hub.ingest(msg(1001))
@@ -232,12 +235,14 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         await self.hub.sweep()
         self.assertIn("nhận rồi im", self.transport.warnings[0][0])
 
-    async def test_escalation_once_at_30_then_recovery_edits_original(self):
+    async def test_escalation_once_at_15_then_recovery_edits_original(self):
+        # Escalation threshold changed from 1800s of message age (old tier 2)
+        # to ESCALATE_AFTER=900s measured from deaf_since (spec section 3.4).
         await self.hub.ingest(msg())
         self.clock.advance(301)
         await self.hub.sweep()
         first_id = self.transport.warnings[0][3]
-        self.clock.advance(1498)
+        self.clock.advance(898)
         await self.hub.sweep()
         self.assertEqual(len(self.transport.warnings), 1)
         self.clock.advance(1)
@@ -385,6 +390,152 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
             self.clock.advance(50)
             await self.hub.sweep()
             self.assertEqual(ping.await_count, 2)
+
+    def metric_rows(self, event=None):
+        rows = [json.loads(line) for line in
+                self.hub.metrics_path.read_text(encoding="utf-8").splitlines()]
+        return [r for r in rows if event is None or r["event"] == event]
+
+    # --- Issue: hub-side deaf detection + escalation (spec sections 3.2-3.4)
+
+    async def test_deaf_flagged_at_five_minutes_with_pending(self):
+        await self.deliver()
+        self.clock.advance(301)
+        self.hub._deaf_check(self.clock())
+        entry = self.hub.deaf_state["lead"]
+        self.assertEqual(entry["state"], "deaf")
+        self.assertEqual(entry["deaf_since"], self.hub.last_wait_at["lead"] + 300)
+        rows = [r for r in self.metric_rows("deaf") if r["agent"] == "lead"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["pending"], 1)
+        self.assertIn("deaf_since_wall", rows[0])
+
+    async def test_idle_logged_not_warned_without_pending(self):
+        self.clock.advance(301)
+        self.hub._deaf_check(self.clock())
+        self.assertEqual(self.hub.deaf_state["lead"]["state"], "idle")
+        rows = [r for r in self.metric_rows("idle") if r["agent"] == "lead"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(self.transport.warnings, [])
+
+    async def test_stale_band_does_not_flag(self):
+        await self.deliver()
+        self.clock.advance(150)
+        self.hub._deaf_check(self.clock())
+        self.assertEqual(self.hub.deaf_state["lead"]["state"], "stale")
+        self.assertEqual(self.metric_rows("deaf"), [])
+        self.assertEqual(self.transport.warnings, [])
+
+    async def test_deaf_recovers_on_next_wait(self):
+        await self.deliver()
+        self.clock.advance(301)
+        self.hub._deaf_check(self.clock())
+        self.assertEqual(self.hub.deaf_state["lead"]["state"], "deaf")
+        await self.hub.wait("lead", 0)
+        self.hub._deaf_check(self.clock())
+        self.assertEqual(self.hub.deaf_state["lead"]["state"], "alive")
+        rows = [r for r in self.metric_rows("recovered_deaf") if r["agent"] == "lead"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["silent_seconds"], 1)
+
+    async def test_escalation_once_at_15_minutes_per_agent(self):
+        await self.deliver()
+        self.clock.advance(301)
+        self.hub._deaf_check(self.clock())
+        deaf_since = self.hub.deaf_state["lead"]["deaf_since"]
+        self.clock.advance(deaf_since + 900 - self.clock())
+        await self.hub._warn(self.clock())
+        mentions = [w for w in self.transport.warnings if w[2]]
+        self.assertEqual(len(mentions), 1)
+        self.assertIn("lead", mentions[0][0])
+        self.assertIn("ĐIẾC", mentions[0][0])
+        self.assertIn("1 tin đang kẹt", mentions[0][0])
+        rows = [r for r in self.metric_rows("escalation") if r["agent"] == "lead"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["pending"], 1)
+        self.assertEqual(rows[0]["pending_ids"], ["1000"])
+        self.clock.advance(60)
+        await self.hub._warn(self.clock())
+        self.assertEqual(len([w for w in self.transport.warnings if w[2]]), 1)
+
+    async def test_second_agent_escalates_independently(self):
+        # Regression test for the group-tier2 bug: with the old group-level
+        # condition the second agent would never be escalated.
+        await self.hub.ingest(msg(1000, '"lead "worker'))
+        await self.hub.wait("lead", 0)
+        await self.hub.wait("worker", 0)
+        self.clock.advance(301)
+        self.hub._deaf_check(self.clock())
+        self.assertEqual(self.hub.deaf_state["lead"]["state"], "deaf")
+        self.assertEqual(self.hub.deaf_state["worker"]["state"], "deaf")
+        self.clock.advance(899)
+        await self.hub._warn(self.clock())
+        mentions = [w[0] for w in self.transport.warnings if w[2]]
+        self.assertEqual(len(mentions), 2)
+        self.assertTrue(any("lead" in text for text in mentions))
+        self.assertTrue(any("worker" in text for text in mentions))
+
+    async def test_redelivery_schedule_1_5_15(self):
+        await self.deliver()
+        state = lambda: self.hub.delivery[("lead", "1000")]
+        self.clock.advance(59)
+        await self.hub.sweep()
+        self.assertFalse(state()["due"])
+        self.clock.advance(1)
+        await self.hub.sweep()
+        self.assertTrue(state()["due"])
+        self.assertEqual((await self.hub.wait("lead", 0))["messages"][0]["redelivered"], 1)
+        self.clock.advance(239)
+        await self.hub.sweep()
+        self.assertFalse(state()["due"])
+        self.clock.advance(1)
+        await self.hub.sweep()
+        self.assertTrue(state()["due"])
+        self.assertEqual((await self.hub.wait("lead", 0))["messages"][0]["redelivered"], 2)
+        self.clock.advance(599)
+        await self.hub.sweep()
+        self.assertFalse(state()["due"])
+        self.clock.advance(1)
+        await self.hub.sweep()
+        self.assertTrue(state()["due"])
+        self.assertEqual((await self.hub.wait("lead", 0))["messages"][0]["redelivered"], 3)
+        await self.hub.sweep()
+        self.assertIn("1000", self.hub.suspects["lead"])
+
+    async def test_working_lease_ignores_redelivery_schedule(self):
+        await self.deliver()
+        await self.hub.working("lead")
+        self.clock.advance(300)
+        await self.hub.sweep()
+        self.assertFalse(self.hub.delivery[("lead", "1000")]["due"])
+        self.assertIn("1000", self.hub.queues["lead"])
+        self.clock.advance(1)
+        await self.hub.sweep()
+        self.assertTrue(self.hub.delivery[("lead", "1000")]["due"])
+
+    async def test_restart_grace_before_deaf_flag(self):
+        await self.deliver()
+        await self.restart()
+        self.clock.advance(299)
+        self.hub._deaf_check(self.clock())
+        self.assertNotEqual(self.hub.deaf_state["lead"]["state"], "deaf")
+        self.clock.advance(2)
+        self.hub._deaf_check(self.clock())
+        entry = self.hub.deaf_state["lead"]
+        self.assertEqual(entry["state"], "deaf")
+        self.assertEqual(entry["deaf_since"], self.hub.started_at + 300)
+
+    async def test_recovery_after_escalation_edits_and_reports_duration(self):
+        await self.deliver()
+        self.clock.advance(301)
+        self.hub._deaf_check(self.clock())
+        self.clock.advance(899)
+        await self.hub._warn(self.clock())
+        self.assertEqual(len([w for w in self.transport.warnings if w[2]]), 1)
+        await self.hub.ack("lead", "1000")
+        joined = "\n".join(w[0] for w in self.transport.warnings)
+        self.assertIn("✅ lead đã hồi sau 15.0 phút", joined)
+        self.assertIn("Bridge recovered: lead (điếc 15.0 phút)", joined)
 
     async def test_dedicated_hub_messages_are_not_authorized_or_counted(self):
         cfg = replace(self.cfg, hub_bot_id=104, hub_bot_token="offline-hub")
