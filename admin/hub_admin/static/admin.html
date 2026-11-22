@@ -28,6 +28,12 @@
     h1 { font-size: 1.2rem; } h2 { font-size: 1.05rem; }
     dialog { width: 94%; }
   }
+  /* tabs: one section at a time instead of one long page */
+  #tab-bar { position: sticky; top: 0; z-index: 5; display: flex; gap: .3rem; overflow-x: auto; padding: .4rem .1rem; background: Canvas; border-bottom: 1px solid #8886; }
+  .tab-btn { white-space: nowrap; min-height: 44px; padding: .35rem .8rem; border: 1px solid #8886; border-radius: 999px; background: transparent; color: inherit; font-size: .95rem; }
+  .tab-btn.active { font-weight: 700; text-decoration: underline; border-color: currentColor; }
+  #app > section.card { display: none; }
+  #app > section.card.tab-active:not(.hidden) { display: block; }
 </style>
 </head>
 <body>
@@ -66,7 +72,17 @@
 
 <main id="app" class="hidden">
   <p><button id="logout-btn">Đăng xuất</button></p>
-  <section class="card">
+  <nav id="tab-bar" aria-label="Mục quản trị">
+    <button type="button" class="tab-btn" data-tab="overview-card">Tổng quan</button>
+    <button type="button" class="tab-btn" data-tab="laws-card">Luật cứng</button>
+    <button type="button" class="tab-btn" data-tab="queue-card">Hàng chờ</button>
+    <button type="button" class="tab-btn" data-tab="grants-card">Quyền tạm</button>
+    <button type="button" class="tab-btn" data-tab="ops-card">Cấu hình</button>
+    <button type="button" class="tab-btn" data-tab="account-card">Tài khoản</button>
+    <button type="button" class="tab-btn" data-tab="audit-card">Nhật ký</button>
+    <button type="button" class="tab-btn" data-tab="guide-card">Hướng dẫn</button>
+  </nav>
+  <section class="card" id="overview-card">
     <h2>Tổng quan</h2>
     <div id="hub-status" class="muted">Đang tải…</div>
     <table id="agents-table">
@@ -97,7 +113,7 @@
     <p class="muted hidden" id="laws-readonly-note">Quyền tạm hiện tại chỉ xem — chỉ admin hoặc quyền tạm mức full mới thêm/sửa/xoá được luật.</p>
   </section>
 
-  <section class="card">
+  <section class="card" id="queue-card">
     <h2>Hàng chờ của agent</h2>
     <label>Chọn agent <select id="queue-agent"></select></label>
     <button id="queue-load-btn">Xem hàng chờ</button>
@@ -147,7 +163,7 @@
     <div id="totp-issued"></div>
   </section>
 
-  <section class="card">
+  <section class="card" id="audit-card">
     <h2>Nhật ký</h2>
     <div id="journal-box" class="muted">…</div>
     <h3>Audit quản trị</h3>
@@ -155,7 +171,7 @@
     <button id="audit-load-btn">Tải audit</button>
   </section>
 
-  <section class="card">
+  <section class="card" id="guide-card">
     <details>
       <summary><strong>Hướng dẫn quản trị</strong></summary>
       <ol>
@@ -435,9 +451,38 @@ $("login-grant-btn").onclick = async () => {
     $("grants-card").classList.add("hidden"); // grant admin stays admin-only
     $("account-card").classList.add("hidden"); // password management is the human admin's own
     if (grantScope !== "full") $("ops-card").classList.add("hidden");
+    refreshTabBar();
     note(`Đã vào bằng quyền tạm (phạm vi: ${grantScope}).`); refreshAll();
   } catch (e) { grantToken = null; grantScope = null; note(e.message, true); }
 };
+
+// ---------------------------------------------------------------- tabs
+// The app used to be one long scrolling page; now each section is a tab
+// and exactly one is visible at a time. Identity-based hiding (.hidden,
+// applied on grant login) still wins over the active tab.
+function refreshTabBar() {
+  document.querySelectorAll(".tab-btn").forEach((b) => {
+    const c = $(b.dataset.tab);
+    b.classList.toggle("hidden", !c || c.classList.contains("hidden"));
+  });
+  const active = document.querySelector("#app > section.card.tab-active");
+  if (!active || active.classList.contains("hidden")) activateTab(null);
+}
+function activateTab(cardId) {
+  const avail = [...document.querySelectorAll(".tab-btn")].filter((b) => {
+    const c = $(b.dataset.tab);
+    return c && !c.classList.contains("hidden");
+  });
+  if (!avail.some((b) => b.dataset.tab === cardId)) cardId = avail.length ? avail[0].dataset.tab : null;
+  document.querySelectorAll("#app > section.card").forEach((s) => s.classList.toggle("tab-active", s.id === cardId));
+  document.querySelectorAll(".tab-btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === cardId));
+  if (cardId) {
+    try { localStorage.setItem("hub-admin-tab", cardId); } catch (e) {}
+    if (location.hash !== "#" + cardId) history.replaceState(null, "", "#" + cardId);
+  }
+}
+document.querySelectorAll(".tab-btn").forEach((b) => { b.onclick = () => activateTab(b.dataset.tab); });
+activateTab((location.hash || "").slice(1) || (() => { try { return localStorage.getItem("hub-admin-tab"); } catch (e) { return null; } })());
 
 // ---------------------------------------------------------------- agents
 async function refreshAgents() {
