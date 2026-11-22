@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quản trị Hub</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; margin: 1.2rem auto; max-width: 1060px; padding: 0 1rem; }
+  h1 { font-size: 1.35rem; } h2 { font-size: 1.1rem; margin-top: 1.6rem; }
+  table { border-collapse: collapse; width: 100%; font-size: .92rem; }
+  th, td { border: 1px solid #8886; padding: .35rem .5rem; text-align: left; vertical-align: top; }
+  button { cursor: pointer; margin: .1rem .15rem .1rem 0; }
+  input, select, textarea { margin: .15rem .3rem .15rem 0; max-width: 100%; }
+  .card { border: 1px solid #8886; border-radius: 8px; padding: .8rem 1rem; margin: .6rem 0; }
+  .muted { opacity: .75; font-size: .88rem; }
+  .on { color: #1a7f37; font-weight: 600; } .off { color: #b42318; font-weight: 600; }
+  .hidden { display: none; }
+  .row-actions { white-space: nowrap; }
+  #msg { min-height: 1.2em; }
+  dialog { max-width: 560px; width: 92%; }
+  label { display: block; font-size: .88rem; margin-top: .4rem; }
+</style>
+</head>
+<body>
+<h1>Quản trị Hub</h1>
+<p class="muted">Trang quản trị riêng của hub — chỉ quản trị viên. Agent chỉ vào được bằng quyền tạm thời do quản trị viên cấp.</p>
+<p id="msg" role="status"></p>
+
+<section id="login-box" class="card">
+  <h2>Đăng nhập quản trị</h2>
+  <label>Mật khẩu quản trị <input id="login-token" type="password" size="40" autocomplete="off"></label>
+  <button id="login-btn">Đăng nhập</button>
+  <p class="muted">Hoặc dùng token quyền tạm (dành cho agent): dán vào ô trên rồi bấm “Đăng nhập bằng quyền tạm”.</p>
+  <button id="login-grant-btn">Đăng nhập bằng quyền tạm</button>
+  <h3>Quên mật khẩu?</h3>
+  <p class="muted">Nhập mã khôi phục đã được cấp (mã chỉ dùng được 1 lần) và mật khẩu mới. Đặt lại xong mọi phiên đăng nhập cũ đều bị huỷ.</p>
+  <label>Mã khôi phục <input id="recover-code" type="text" size="30" autocomplete="off"></label>
+  <label>Mật khẩu mới (ít nhất 8 ký tự) <input id="recover-new" type="password" size="30" autocomplete="off"></label>
+  <button id="recover-btn">Đặt lại mật khẩu bằng mã khôi phục</button>
+  <div id="recover-issued"></div>
+  <p class="muted">Mất cả mã khôi phục? Dùng đường dự phòng qua SSH — xem file HUONG-DAN-RESET-MAT-KHAU.md trong gói.</p>
+</section>
+
+<main id="app" class="hidden">
+  <p><button id="logout-btn">Đăng xuất</button></p>
+  <section class="card">
+    <h2>Tổng quan</h2>
+    <div id="hub-status" class="muted">Đang tải…</div>
+    <table id="agents-table">
+      <thead><tr>
+        <th>Agent</th><th>Trạng thái</th><th>Bot</th><th>Chờ / Lease</th>
+        <th>Token bot</th><th>Ghế</th><th>Thao tác</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+    <button id="refresh-btn">Tải lại</button>
+    <button id="add-agent-btn">+ Thêm agent</button>
+  </section>
+
+  <section class="card">
+    <h2>Hàng chờ của agent</h2>
+    <label>Chọn agent <select id="queue-agent"></select></label>
+    <button id="queue-load-btn">Xem hàng chờ</button>
+    <div id="queue-box" class="muted">Chưa chọn.</div>
+  </section>
+
+  <section class="card" id="grants-card">
+    <h2>Quyền tạm đang hiệu lực</h2>
+    <div id="grants-box" class="muted">…</div>
+    <h3>Cấp quyền tạm mới</h3>
+    <label>Agent <select id="grant-agent"></select></label>
+    <label>Phạm vi
+      <select id="grant-scope">
+        <option value="read">Chỉ xem (read)</option>
+        <option value="operate">Thao tác thường (operate)</option>
+        <option value="full">Toàn quyền như admin (full) — gồm cả việc nhạy cảm</option>
+      </select></label>
+    <label>Thời hạn (phút) <input id="grant-ttl" type="number" value="60" min="1" max="1440"></label>
+    <label>Lý do <input id="grant-reason" type="text" size="40"></label>
+    <button id="grant-issue-btn">Cấp quyền</button>
+    <p class="muted">Token tạm chỉ hiện MỘT lần sau khi cấp. Chỉ quản trị viên mới cấp/thu hồi được quyền. Phạm vi “full” = toàn quyền như admin kể cả việc nhạy cảm (xoá, thay token bot, reset cursor, sửa cấu hình) — chỉ cấp khi cần thay admin xử lý sự cố.</p>
+    <div id="grant-issued"></div>
+  </section>
+
+  <section class="card" id="ops-card">
+    <h2>Cấu hình vận hành</h2>
+    <div id="ops-box" class="muted">…</div>
+    <button id="ops-save-btn">Lưu cấu hình (thao tác nhạy cảm)</button>
+  </section>
+
+  <section class="card" id="account-card">
+    <h2>Tài khoản quản trị</h2>
+    <h3>Đổi mật khẩu</h3>
+    <label>Mật khẩu hiện tại <input id="pw-current" type="password" size="30" autocomplete="off"></label>
+    <label>Mật khẩu mới (ít nhất 8 ký tự) <input id="pw-new" type="password" size="30" autocomplete="off"></label>
+    <button id="pw-change-btn">Đổi mật khẩu</button>
+    <p class="muted">Đổi xong, mọi phiên đăng nhập KHÁC đều bị huỷ; mật khẩu chỉ lưu dạng băm, không lưu thô.</p>
+    <h3>Mã khôi phục (dùng khi quên mật khẩu)</h3>
+    <button id="recovery-gen-btn">Tạo mã khôi phục mới</button>
+    <p class="muted">Mã chỉ hiện MỘT lần — hãy cất nơi an toàn. Tạo mã mới sẽ vô hiệu mã cũ. Mã dùng được 1 lần để đặt lại mật khẩu ngay tại màn đăng nhập.</p>
+    <div id="recovery-issued"></div>
+  </section>
+
+  <section class="card">
+    <h2>Nhật ký</h2>
+    <div id="journal-box" class="muted">…</div>
+    <h3>Audit quản trị</h3>
+    <div id="audit-box" class="muted">…</div>
+    <button id="audit-load-btn">Tải audit</button>
+  </section>
+</main>
+
+<dialog id="agent-dialog">
+  <form method="dialog">
+    <h2 id="agent-dialog-title">Thêm agent</h2>
+    <input type="hidden" id="f-key-hidden">
+    <label>Agent id (không đổi sau khi tạo) <input id="f-key" type="text"></label>
+    <label>Tên hiển thị <input id="f-display" type="text"></label>
+    <label>Discord bot user id <input id="f-botid" type="text"></label>
+    <label>Username bot <input id="f-botuser" type="text"></label>
+    <label>Các dạng gọi tên (phân tách bằng dấu phẩy) <input id="f-tokens" type="text" size="44"></label>
+    <label>Loại ghế
+      <select id="f-seat"><option value="live">Ghế agent sống</option><option value="api">Ghế API</option></select></label>
+    <label><input id="f-all" type="checkbox"> Nhận tin “tất cả”</label>
+    <label>Vai trò <input id="f-role" type="text"></label>
+    <label>Mô tả <input id="f-desc" type="text" size="44"></label>
+    <label>Hạn nhận/trả lời (giây, trống = mặc định, tối thiểu 180) <input id="f-deadline" type="number" min="180"></label>
+    <label>Ghi chú <input id="f-notes" type="text" size="44"></label>
+    <label id="f-token-row">Token bot (chỉ khi tạo mới / thay token) <input id="f-token" type="password" size="44" autocomplete="off"></label>
+    <p class="muted">Agent mới luôn bắt đầu ở trạng thái TẠM DỪNG — bấm Mở lại khi sẵn sàng.</p>
+    <button id="agent-save-btn" value="save">Lưu</button>
+    <button value="cancel">Huỷ</button>
+  </form>
+</dialog>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+let grantToken = null; // when logged in via a temporary grant
+let grantScope = null; // scope of that grant, from /api/overview
+const canSensitive = () => !grantToken || grantScope === "full";
+
+function note(text, isError) {
+  $("msg").textContent = text;
+  $("msg").style.color = isError ? "#b42318" : "";
+}
+async function api(method, path, body, headers) {
+  const opts = { method, headers: Object.assign({}, headers || {}) };
+  if (grantToken) opts.headers["Authorization"] = "Bearer " + grantToken;
+  if (body !== undefined) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
+  const res = await fetch(path, opts);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+  return data;
+}
+function stepUpHeaders() {
+  if (grantToken) return {}; // a full grant is itself the admin's delegation
+  const token = prompt("Thao tác nhạy cảm — nhập lại token quản trị để xác thực:");
+  return token ? { "X-Admin-Reauth": token } : null;
+}
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+// ---------------------------------------------------------------- login
+$("login-btn").onclick = async () => {
+  try {
+    await api("POST", "/api/login", { password: $("login-token").value });
+    grantToken = null;
+    $("login-box").classList.add("hidden"); $("app").classList.remove("hidden");
+    note("Đã đăng nhập quản trị."); refreshAll();
+  } catch (e) { note(e.message, true); }
+};
+$("logout-btn").onclick = async () => {
+  try { await api("POST", "/api/logout"); } catch (e) { /* session may already be gone */ }
+  grantToken = null; grantScope = null;
+  $("app").classList.add("hidden"); $("login-box").classList.remove("hidden");
+  $("login-token").value = "";
+  note("Đã đăng xuất.");
+};
+$("recover-btn").onclick = async () => {
+  try {
+    const res = await fetch("/api/recover", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ recovery_code: $("recover-code").value.trim(), new_password: $("recover-new").value }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+    note("Đã đặt lại mật khẩu. Hãy đăng nhập bằng mật khẩu mới.");
+    if (data.recovery_code) {
+      $("recover-issued").innerHTML =
+        `<b>Mã khôi phục MỚI của bạn (chỉ hiện lần này — hãy cất ngay):</b> <code>${esc(data.recovery_code)}</code>` +
+        `<br><span class="muted">Mã cũ đã chết hẳn. Từ giờ dùng mã mới này nếu quên mật khẩu.</span>`;
+    }
+    $("recover-code").value = ""; $("recover-new").value = "";
+  } catch (e) { note(e.message, true); }
+};
+$("login-grant-btn").onclick = async () => {
+  grantToken = $("login-token").value.trim();
+  try {
+    const data = await api("GET", "/api/overview");
+    grantScope = data.identity ? data.identity.scope : null;
+    $("login-box").classList.add("hidden"); $("app").classList.remove("hidden");
+    $("grants-card").classList.add("hidden"); // grant admin stays admin-only
+    $("account-card").classList.add("hidden"); // password management is the human admin's own
+    if (grantScope !== "full") $("ops-card").classList.add("hidden");
+    note(`Đã vào bằng quyền tạm (phạm vi: ${grantScope}).`); refreshAll();
+  } catch (e) { grantToken = null; grantScope = null; note(e.message, true); }
+};
+
+// ---------------------------------------------------------------- agents
+async function refreshAgents() {
+  const data = await api("GET", "/api/overview");
+  const hub = data.hub || {};
+  $("hub-status").textContent =
+    `Hub: ${hub.ready ? "sẵn sàng" : "chưa sẵn sàng"}${hub.recovering ? " (đang khôi phục)" : ""} · ` +
+    `journal: ${hub.journal_healthy ? "khoẻ" : "có vấn đề"} · bot online ${(hub.online_bots || []).length}/${(hub.expected_bots || []).length}`;
+  const tbody = $("agents-table").querySelector("tbody");
+  tbody.innerHTML = "";
+  const selects = [$("queue-agent"), $("grant-agent")];
+  selects.forEach((s) => { s.innerHTML = ""; });
+  for (const a of data.agents) {
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      `<td><b>${esc(a.display_name)}</b><br><span class="muted">${esc(a.key)} · ${esc(a.role || "")}</span></td>` +
+      `<td>${a.enabled ? '<span class="on">Đang bật</span>' : '<span class="off">Tạm dừng</span>' +
+        (a.pause_reason ? `<br><span class="muted">${esc(a.pause_reason)}</span>` : "")}</td>` +
+      `<td>${a.online ? '<span class="on">online</span>' : '<span class="off">offline</span>'}</td>` +
+      `<td>${a.pending} chờ / ${a.leases} lease</td>` +
+      `<td>${a.token_configured ? "đã có (" + a.token_length + " ký tự)" : "CHƯA CÓ"}</td>` +
+      `<td>${a.seat_type === "api" ? "API" : "sống"}</td>` +
+      `<td class="row-actions"></td>`;
+    const cell = tr.querySelector(".row-actions");
+    const mk = (label, fn) => { const b = document.createElement("button"); b.textContent = label; b.onclick = fn; cell.appendChild(b); };
+    if (a.enabled) mk("Tạm dừng", () => pauseAgent(a));
+    else mk("Mở lại", () => resumeAgent(a));
+    mk("Sửa", () => openAgentDialog(a));
+    mk("Hàng chờ", () => { $("queue-agent").value = a.key; loadQueue(); });
+    if (canSensitive()) {
+      mk("Thay token", () => setToken(a));
+      mk("Xoá", () => deleteAgent(a));
+    }
+    tbody.appendChild(tr);
+    selects.forEach((s) => { const o = document.createElement("option"); o.value = a.key; o.textContent = a.display_name; s.appendChild(o); });
+  }
+}
+async function pauseAgent(a) {
+  const reason = prompt(`Lý do tạm dừng ${a.display_name} (bắt buộc, ghi vào audit):`, "bảo trì");
+  if (!reason) return;
+  try { await api("POST", `/api/agents/${a.key}/pause`, { reason, drain: true }); note(`Đã tạm dừng ${a.display_name}.`); refreshAgents(); }
+  catch (e) { note(e.message, true); }
+}
+async function resumeAgent(a) {
+  try { await api("POST", `/api/agents/${a.key}/resume`, {}); note(`Đã mở lại ${a.display_name}.`); refreshAgents(); }
+  catch (e) { note(e.message, true); }
+}
+async function setToken(a) {
+  const headers = stepUpHeaders(); if (!headers) return;
+  const token = prompt(`Token bot mới cho ${a.display_name} (không hiển thị lại sau khi lưu):`);
+  if (!token) return;
+  try { await api("POST", `/api/agents/${a.key}/token`, { bot_token: token }, headers); note("Đã thay token."); refreshAgents(); }
+  catch (e) { note(e.message, true); }
+}
+async function deleteAgent(a) {
+  if (a.pending || a.leases) { note(`Chưa xoá được: còn ${a.pending} tin chờ, ${a.leases} lease. Xử lý/tạm dừng trước.`, true); return; }
+  const headers = stepUpHeaders(); if (!headers) return;
+  const confirmName = prompt(`XOÁ CỨNG ${a.display_name} — hồ sơ bị xoá hẳn (journal/audit lịch sử vẫn giữ). Gõ đúng "${a.key}" để xác nhận:`);
+  if (!confirmName) return;
+  try { await api("DELETE", `/api/agents/${a.key}`, { confirm_name: confirmName }, headers); note(`Đã xoá ${a.display_name}.`); refreshAgents(); }
+  catch (e) { note(e.message, true); }
+}
+
+// ---------------------------------------------------------------- dialog
+function openAgentDialog(a) {
+  const isNew = !a;
+  $("agent-dialog-title").textContent = isNew ? "Thêm agent" : `Sửa ${a.display_name}`;
+  $("f-key").value = isNew ? "" : a.key;
+  $("f-key").disabled = !isNew;
+  $("f-display").value = isNew ? "" : a.display_name;
+  $("f-botid").value = isNew ? "" : (a.bot_id || "");
+  $("f-botuser").value = isNew ? "" : (a.bot_username || "");
+  $("f-tokens").value = isNew ? "" : (a.call_tokens || []).join(", ");
+  $("f-seat").value = isNew ? "live" : a.seat_type;
+  $("f-all").checked = isNew ? false : !!a.receive_all;
+  $("f-role").value = isNew ? "" : (a.role || "");
+  $("f-desc").value = isNew ? "" : (a.description || "");
+  $("f-deadline").value = isNew ? "" : (a.receive_deadline || "");
+  $("f-notes").value = isNew ? "" : (a.notes || "");
+  $("f-token").value = "";
+  $("f-token-row").style.display = isNew ? "" : "none";
+  $("agent-dialog").showModal();
+  $("agent-save-btn").onclick = async (ev) => {
+    ev.preventDefault();
+    const payload = {
+      display_name: $("f-display").value.trim(),
+      bot_id: $("f-botid").value.trim(),
+      bot_username: $("f-botuser").value.trim(),
+      call_tokens: $("f-tokens").value.split(",").map((s) => s.trim()).filter(Boolean),
+      seat_type: $("f-seat").value,
+      receive_all: $("f-all").checked,
+      role: $("f-role").value.trim(),
+      description: $("f-desc").value.trim(),
+      receive_deadline: $("f-deadline").value ? Number($("f-deadline").value) : null,
+      notes: $("f-notes").value.trim(),
+    };
+    try {
+      if (isNew) {
+        payload.key = $("f-key").value.trim();
+        const token = $("f-token").value.trim();
+        if (token) payload.bot_token = token;
+        await api("POST", "/api/agents", payload);
+        note("Đã thêm agent (đang tạm dừng).");
+      } else {
+        await api("PATCH", `/api/agents/${a.key}`, payload);
+        note("Đã lưu.");
+      }
+      $("agent-dialog").close(); refreshAgents();
+    } catch (e) { note(e.message, true); }
+  };
+}
+$("add-agent-btn").onclick = () => openAgentDialog(null);
+
+// ---------------------------------------------------------------- queue
+async function loadQueue() {
+  const key = $("queue-agent").value;
+  if (!key) return;
+  try {
+    const data = await api("GET", `/api/agents/${key}/queue`);
+    if (!data.items.length) { $("queue-box").textContent = "Hàng chờ trống. Cursor: " + data.cursor; return; }
+    $("queue-box").innerHTML = data.items.map((i) =>
+      `#${esc(i.message_id)} · ${esc(i.author || "?")} · giao ${i.deliveries} lần · ` +
+      (i.leased ? `đang lease (còn ${i.lease_seconds_left}s)` : "chưa lease") +
+      ` <button data-rel="${esc(i.message_id)}">Giải phóng lease</button>` +
+      (canSensitive() ? ` <button data-ack="${esc(i.message_id)}">Ack hộ (nhạy cảm)</button>` : "")
+    ).join("<br>");
+    $("queue-box").querySelectorAll("[data-rel]").forEach((b) => b.onclick = async () => {
+      await api("POST", `/api/agents/${key}/queue/release`, { message_id: b.dataset.rel }); loadQueue();
+    });
+    $("queue-box").querySelectorAll("[data-ack]").forEach((b) => b.onclick = async () => {
+      const headers = stepUpHeaders(); if (!headers) return;
+      await api("POST", `/api/agents/${key}/queue/ack-on-behalf`, { message_id: b.dataset.ack }, headers); loadQueue();
+    });
+  } catch (e) { note(e.message, true); }
+}
+$("queue-load-btn").onclick = loadQueue;
+
+// ---------------------------------------------------------------- grants
+async function refreshGrants() {
+  if (grantToken) return;
+  const data = await api("GET", "/api/grants");
+  const active = data.grants.filter((g) => g.active);
+  $("grants-box").innerHTML = active.length ? active.map((g) =>
+    `${esc(g.agent_key)} · ${esc(g.scope)} · còn ${Math.floor(g.seconds_left / 60)} phút · “${esc(g.reason)}” ` +
+    `<button data-revoke="${g.id}">Thu hồi ngay</button>`).join("<br>")
+    : "Không có quyền tạm nào đang hiệu lực.";
+  $("grants-box").querySelectorAll("[data-revoke]").forEach((b) => b.onclick = async () => {
+    await api("DELETE", `/api/grants/${b.dataset.revoke}`); note("Đã thu hồi — hiệu lực ngay."); refreshGrants();
+  });
+}
+$("grant-issue-btn").onclick = async () => {
+  try {
+    const data = await api("POST", "/api/grants", {
+      agent_key: $("grant-agent").value,
+      scope: $("grant-scope").value,
+      ttl_seconds: Number($("grant-ttl").value) * 60,
+      reason: $("grant-reason").value.trim(),
+    });
+    $("grant-issued").innerHTML =
+      `Token tạm (chỉ hiện lần này): <code>${esc(data.grant.token)}</code> — hết hạn sau ${$("grant-ttl").value} phút.`;
+    refreshGrants(); refreshAudit();
+  } catch (e) { note(e.message, true); }
+};
+
+// ---------------------------------------------------------------- ops
+const OPS_NOTES = {
+  lease_base_seconds: "Thời gian hub giữ một tin đang giao cho agent, chờ agent xác nhận đã nhận (giây).",
+  lease_max_seconds: "Thời gian giữ tin tối đa khi phải gia hạn nhiều lần (giây).",
+  redelivery_max: "Số lần hub giao lại một tin tối đa nếu agent không xác nhận; quá số này thì bỏ qua và báo.",
+  escalation_marks_seconds: "Các mốc hub báo động leo thang khi agent im lặng quá lâu (giây, cách nhau dấu phẩy; 300,1800 = sau 5 phút rồi 30 phút).",
+  circuit_breaker_peer_messages: "Số tin agent qua lại với nhau liên tiếp tối đa trước khi hub ngắt mạch chống lặp vô hạn.",
+  journal_online_days: "Số ngày giữ nhật ký tin ngay trên hub để xem nhanh; cũ hơn thì chuyển lưu trữ.",
+  journal_rotate_mb: "Dung lượng nhật ký tối đa (MB) trước khi xoay vòng sang file mới.",
+  admin_session_idle_seconds: "Thời gian không thao tác (giây) trước khi trang quản trị tự đăng xuất.",
+};
+async function refreshOps() {
+  if (grantToken && grantScope !== "full") return;
+  const data = await api("GET", "/api/ops-config");
+  $("ops-box").innerHTML = Object.entries(data.ops_config).map(([k, v]) =>
+    `<label>${esc(k)} <input data-op="${esc(k)}" value="${esc(Array.isArray(v) ? v.join(",") : v)}" size="18">` +
+    (OPS_NOTES[k] ? `<div class="muted">${esc(OPS_NOTES[k])}</div>` : "") + `</label>`).join("");
+}
+$("ops-save-btn").onclick = async () => {
+  const headers = stepUpHeaders(); if (!headers) return;
+  const changes = {};
+  document.querySelectorAll("[data-op]").forEach((input) => {
+    const raw = input.value.trim();
+    changes[input.dataset.op] = raw.includes(",") ? raw.split(",").map((s) => Number(s.trim())) : Number(raw);
+  });
+  try { await api("PATCH", "/api/ops-config", { changes }, headers); note("Đã lưu cấu hình vận hành."); refreshOps(); }
+  catch (e) { note(e.message, true); }
+};
+
+// ---------------------------------------------------------------- logs
+async function refreshJournal() {
+  const data = await api("GET", "/api/journal");
+  const j = data.journal;
+  $("journal-box").textContent = j.exists
+    ? `Journal: ${j.lines} dòng · ${(j.bytes / 1048576).toFixed(2)} MB · phủ ${j.span_days ?? "?"} ngày · ` +
+      `chính sách: giữ ${j.policy.online_days} ngày, xoay ở ${j.policy.rotate_mb} MB · ${j.action_needed ? "CẦN xử lý xoay/lưu trữ" : "trong ngưỡng"}`
+    : "Chưa có journal.";
+}
+async function refreshAudit() {
+  const data = await api("GET", "/api/audit?limit=50");
+  $("audit-box").innerHTML = data.entries.length ? data.entries.slice().reverse().map((e) =>
+    `${new Date(e.ts * 1000).toLocaleString()} · ${esc(e.actor)} · ${esc(e.action)} · ${esc(e.target || "")}` +
+    (e.grant_id ? ` · grant ${esc(e.grant_id)}` : "")).join("<br>") : "Chưa có bản ghi audit.";
+}
+$("audit-load-btn").onclick = () => { refreshAudit(); refreshJournal(); };
+
+// ---------------------------------------------------------------- account
+$("pw-change-btn").onclick = async () => {
+  try {
+    await api("POST", "/api/change-password", {
+      current_password: $("pw-current").value, new_password: $("pw-new").value });
+    $("pw-current").value = ""; $("pw-new").value = "";
+    note("Đã đổi mật khẩu. Các phiên đăng nhập khác đã bị huỷ.");
+  } catch (e) { note(e.message, true); }
+};
+$("recovery-gen-btn").onclick = async () => {
+  try {
+    const data = await api("POST", "/api/recovery-code", {});
+    $("recovery-issued").innerHTML =
+      `Mã khôi phục (chỉ hiện lần này, hãy cất ngay): <code>${esc(data.recovery_code)}</code>`;
+    refreshAudit();
+  } catch (e) { note(e.message, true); }
+};
+
+function refreshAll() { refreshAgents(); refreshGrants(); refreshOps(); refreshJournal(); refreshAudit(); }
+$("refresh-btn").onclick = refreshAll;
+</script>
+</body>
+</html>
