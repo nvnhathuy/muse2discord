@@ -229,6 +229,21 @@ class LawsTests(unittest.TestCase):
         self.assertIn("bridge laws", body)
         self.assertIn("laws.json", body)
 
+    def test_page_has_tab_bar(self):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        conn.request("GET", "/")
+        res = conn.getresponse()
+        body = res.read().decode("utf-8")
+        conn.close()
+        self.assertEqual(res.status, 200)
+        self.assertIn('id="tab-bar"', body)
+        for card in ("overview-card", "laws-card", "queue-card", "grants-card",
+                     "ops-card", "account-card", "audit-card", "guide-card"):
+            self.assertIn(f'data-tab="{card}"', body)
+            self.assertIn(f'id="{card}"', body)
+        self.assertIn("activateTab", body)
+        self.assertIn("tab-active", body)
+
 
 if __name__ == "__main__":
     unittest.main()
