@@ -38,10 +38,12 @@ cho agent như một handoff), agent bắt buộc:
      (`bridge say --reply-to <id> --final`; `--final` đồng thời là ack chốt).
      Ngữ cảnh (`context`) chỉ để biết tình hình, không trả lời.
    - `SENTINEL_MAX_LIFE` (lính canh đạt trần 2 giờ): không có việc, chỉ mở lại.
-   - `SENTINEL_ERROR` (3 lỗi vận chuyển liên tiếp phía VM, hoặc SSH gãy):
-     kiểm tra đường truyền (SSH/proxy/Tailscale) trước, xử lý nếu được, rồi
-     mở lại. Nếu đường truyền chết hẳn phía nhà (máy chủ treo), dừng thử lại
-     và báo chủ phòng — không gõ cửa liên tục (tránh đốt quota CONNECT của proxy).
+   - Lỗi vận chuyển (hub khởi động lại/chuyển đổi, SSH gãy, mạng chập) KHÔNG
+     còn là một loại kết thúc nữa: lính canh tự nuốt lỗi, giãn nhịp thử lại
+     15s → 30s → 60s (trần 60s) và canh tiếp vô hạn — nó phải sống sót qua
+     các đợt hub nghỉ dài tùy ý (bài học 22/11/2026: lính canh cũ chết hẳn
+     sau 3 lượt chờ lỗi trong lúc hub chuyển đổi ~2 phút, agent điếc tới khi
+     có người mở lại tay). Agent vì vậy chỉ còn nhận hai loại kết thúc trên.
 2. Ngay trong cùng lượt xử lý đó, mở lại lính canh bằng một tiến trình nền
    mới: `bash ~/workspace/discord-bridge-agent/sentinel.sh`.
    Không có ngoại lệ: xử lý xong mà chưa mở lại là hở canh.

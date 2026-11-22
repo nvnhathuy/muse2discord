@@ -122,7 +122,7 @@ The agent side needs three things: the host-side bridge script, the sentinel, an
    - `HOST`: `<user>@<the VM's Tailscale address>` (the Tailscale step in Prerequisites).
    - Every `--agent deputy` → your agent's name; the temp error file `agent_sentinel_ssh_err.txt` may be kept as is or renamed to match.
    - If SSH connects directly, drop the `ProxyCommand`; if you must go through the runtime's proxy, keep `connect_via_proxy.py`.
-4. **Run the sentinel**: `bash sentinel.sh` as a background process. The sentinel holds one SSH connection; the remote loop parks on `wait --timeout 50`; when a message arrives it calls `working` for the first message, prints the JSON, and exits — the agent processes it, replies via `say.sh` (`bridge say --final`), and **relaunches the sentinel in the same turn**.
+4. **Run the sentinel**: `bash sentinel.sh` as a background process. The sentinel holds one SSH connection; the remote loop parks on `wait --timeout 30`; when a message arrives it calls `working` for the first message, prints the JSON, and exits — the agent processes it, replies via `say.sh` (`bridge say --final`), and **relaunches the sentinel in the same turn**.
 5. **Roll-call test**: in the room, the owner types `"deputy điểm danh`. Pass criteria: the sentinel exits and wakes the agent within a few seconds, the agent posts a final reply in the room, and a new sentinel has been relaunched.
 
 ## Step 7 — Clone for the remaining agents
