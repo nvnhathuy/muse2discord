@@ -13,8 +13,6 @@ import urllib.request
 import uuid
 from pathlib import Path
 
-from .config import AGENTS
-
 log = logging.getLogger(__name__)
 
 
@@ -26,13 +24,14 @@ class Reliability:
         self.initial_recovery = True
         self.next_ping = self.started_at + 60
         self.sweeper_interval = interval
-        self.completed = {a: set() for a in AGENTS}
-        self.suspects = {a: set() for a in AGENTS}
+        keys = tuple(self.config.agents)
+        self.completed = {a: set() for a in keys}
+        self.suspects = {a: set() for a in keys}
         self.delivery = {}
         self.queued_at = {}
-        self.last_wait_at = dict.fromkeys(AGENTS)
-        self.last_progress_at = dict.fromkeys(AGENTS)
-        self.receive_samples = {a: [] for a in AGENTS}
+        self.last_wait_at = dict.fromkeys(keys)
+        self.last_progress_at = dict.fromkeys(keys)
+        self.receive_samples = {a: [] for a in keys}
         self.warning_state = []
         self.warning_lock = asyncio.Lock()
         self.sweeper_task = None
@@ -46,16 +45,17 @@ class Reliability:
         if kind in {"delivery", "working"}:
             self.delivery[(rec["agent"], rec["id"])] = rec["state"]
             if kind == "working" and rec.get("latency") is not None:
-                self.receive_samples[rec["agent"]].append(rec["latency"])
+                # setdefault: the journal may name a since-removed agent
+                self.receive_samples.setdefault(rec["agent"], []).append(rec["latency"])
         elif kind == "suspect":
-            self.suspects[rec["agent"]].add(rec["id"])
+            self.suspects.setdefault(rec["agent"], set()).add(rec["id"])
         elif kind == "warning":
             self.warning_state = rec["groups"]
 
     def _reset_reliability_clocks(self):
         now = self.clock()
         self.restart_sources = set(self.sources)
-        for a in AGENTS:
+        for a in self.config.agents:
             for mid in set(self.queues[a]) | self.suspects[a]:
                 self.queued_at[(a, mid)] = now + 300
         for state in self.delivery.values():
@@ -68,7 +68,7 @@ class Reliability:
             for member in group["members"].values():
                 member["elapsed_before"] = member.get("elapsed_before", 0) + max(0, group.get("saved_at", member["started"]) - member["started"])
                 member["started"] = now
-        for a in AGENTS:
+        for a in self.config.agents:
             self._signal(a)
 
     def _metric(self, event, **data):
@@ -100,7 +100,13 @@ class Reliability:
     def is_hub_message(self, message):
         if self.config.hub_bot_id and message.author_id == self.config.hub_bot_id:
             return True
-        sender = self.config.hub_bot_id or self.config.agents["lead"].bot_id
+        # Warning messages are posted by the runtime's default agent:
+        # the first EFFECTIVE agent in config.agents (the "lead" key in
+        # legacy mode, the first registry key in integrated mode) - the
+        # same rule DiscordRuntime._default_agent uses in send_warning.
+        # Config.Agent carries no leader role, so key order is the rule.
+        default = next(iter(self.config.agents.values()), None)
+        sender = self.config.hub_bot_id or (default.bot_id if default is not None else 0)
         return message.author_id == sender and message.id in {
             g[key] for g in self.warning_state for key in ("message_id", "tier2_id") if g.get(key)}
 
@@ -217,7 +223,7 @@ class Reliability:
         if self.recovering:
             return
         now = self.clock()
-        for agent in AGENTS:
+        for agent in self.config.agents:
             for mid in list(self.queues[agent]):
                 if not self._overdue(agent, mid):
                     continue
@@ -271,7 +277,7 @@ class Reliability:
         active = {a for g in self.warning_state for a, m in g["members"].items() if not m["recovered"]}
         new = {}
         ages = {}
-        for agent in AGENTS:
+        for agent in self.config.agents:
             pending = set(self.queues[agent]) | self.suspects[agent]
             if not pending:
                 continue

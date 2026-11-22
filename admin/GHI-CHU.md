@@ -26,7 +26,7 @@ không triển khai lên hub đang chạy).
   mục 5 (principal riêng, phiên 30 phút), 5b (quyền tạm), 6 (xác thực
   lại cho 5 nhóm thao tác nhạy cảm), 8.1/8.2 (registry sửa nóng + API).
 
-## Điểm Gà cần nối khi đưa vào cây muse2discord
+## Điểm cần nối khi đưa vào cây muse2discord
 
 1. **Nguồn trạng thái thật**: `DeliveryState` trong bản này là mô hình
    tham chiếu đúng ngữ nghĩa hub (cursor, giao lại, lease hết hạn). Khi
@@ -39,7 +39,7 @@ không triển khai lên hub đang chạy).
 3. **Bot online/offline khi thêm/thay token**: đặc tả yêu cầu hub thử
    đưa bot online ngay và báo kết quả trên trang. Bản này lưu token vào
    kho bí mật và registry có hiệu lực ngay; bước reconnect bot thuộc
-   hub core (ngoài phạm vi gói này) — Gà nối sự kiện "token thay đổi /
+   hub core (ngoài phạm vi gói này) — bên tích hợp nối sự kiện "token thay đổi /
    agent bật" từ registry vào vòng quản lý bot của hub.
 4. **Xác thực lại (mục 6)**: bản này dùng cơ chế cắm được — mặc định là
    nhập lại token quản trị qua header `X-Admin-Reauth`. Khi triển khai

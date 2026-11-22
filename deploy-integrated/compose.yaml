@@ -1,0 +1,29 @@
+# Integrated variant of hub/compose.yaml. Same volumes as the current
+# deployment; the registry lives on the data volume under /data/registry.
+# The admin port must only be published on the tailnet interface -
+# replace 100.x.y.z with the NAS tailnet IP before use.
+services:
+  discord-hub-v2:
+    build:
+      context: ..
+      dockerfile: deploy-integrated/Dockerfile
+    restart: unless-stopped
+    env_file: ${BRIDGE_ENV_FILE:-.env}
+    environment:
+      BRIDGE_JOURNAL: /data/bridge.jsonl
+      BRIDGE_SOCKET: /run/bridge.sock
+      BRIDGE_REGISTRY_DIR: /data/registry
+      HUB_ADMIN_HOST: 0.0.0.0
+      HUB_ADMIN_PORT: "8899"
+      # Keydrop: the admin page submits agent SSH keys to this
+      # account on the coordination VM (see deploy-integrated/keydrop).
+      # HUB_KEYDROP_TARGET: keydrop@<VM address>
+    ports:
+      - "100.x.y.z:8899:8899"  # admin page, tailnet only
+    volumes:
+      - bridge-v2-data:/data
+      - bridge-v2-run:/run
+    stop_grace_period: 20s
+volumes:
+  bridge-v2-data:
+  bridge-v2-run:

@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch the keydrop pending file for new agent SSH keys
+
+[Path]
+PathExists=/var/lib/keydrop/pending.tsv
+PathChanged=/var/lib/keydrop/pending.tsv
+Unit=agent-key-install.service
+
+[Install]
+WantedBy=multi-user.target

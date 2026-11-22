@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 import pytest
 
+from bridgehub.config import Agent, Config
 from bridgehub.core import BridgeError, Hub
 from bridgehub.protocol import MAX_FRAME, SocketServer
 from .helpers import FakeTransport, config, empty_history, eventually, msg
@@ -162,6 +163,70 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.request({"command": "wait", "agent": "lead", "timeout": 0}), {"messages": [], "context": [], "heartbeat": True})
 
 
+def custom_config(path):
+    """A hub config whose agent keys are custom deployment keys, none of
+    which belong to the anonymised sample set (lead/worker/deputy)."""
+    return Config(10, 20, 1, {
+        "north": Agent("north", 201, "offline-placeholder", "North", ("north",)),
+        "south": Agent("south", 202, "offline-placeholder", "South", ("south",)),
+    }, str(path / "journal.jsonl"), str(path / "bridge.sock"), 5,
+        {"north": 180., "south": 300.})
+
+
+@unittest.skipUnless(HAS_UNIX, "Native Unix socket lifecycle requires Linux/macOS")
+class CustomAgentKeyTests(unittest.IsolatedAsyncioTestCase):
+    """Regression for LOI 3: sample-key literals left by anonymisation must
+    not gate real agent keys anywhere on the live path (CLI or core)."""
+
+    async def asyncSetUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.transport = FakeTransport()
+        self.hub = Hub(custom_config(Path(self.temp.name)), self.transport)
+        await self.hub.recover(empty_history)
+        self.socket_server = SocketServer(self.hub)
+        await self.socket_server.start()
+
+    async def asyncTearDown(self):
+        await self.socket_server.close()
+        await self.hub.close()
+        self.temp.cleanup()
+
+    async def cli(self, args, expect_ok=True):
+        command = [sys.executable, str(Path(__file__).parents[1] / "bridge"),
+                   "--socket", self.hub.config.socket_path]
+        proc = await asyncio.create_subprocess_exec(*command, *args,
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE)
+        out, err = await proc.communicate()
+        if expect_ok:
+            self.assertEqual(proc.returncode, 0, err.decode())
+        return proc.returncode, json.loads(out)
+
+    async def test_cli_wait_accepts_custom_agent_key_and_routes(self):
+        await self.hub.ingest(msg(2000, '"south điểm danh'))
+        _, result = await self.cli(["wait", "--agent", "south", "--timeout", "0"])
+        self.assertEqual(result["messages"][0]["id"], "2000")
+        # The other custom key is equally valid; it just has no work queued
+        # (the south message only reaches it as context_only, never as a target).
+        _, idle = await self.cli(["wait", "--agent", "north", "--timeout", "0"])
+        self.assertEqual(idle["messages"], [])
+        self.assertTrue(idle["heartbeat"])
+
+    async def test_cli_unknown_agent_is_rejected_by_hub_not_argparse(self):
+        returncode, result = await self.cli(["wait", "--agent", "stranger", "--timeout", "0"],
+                                            expect_ok=False)
+        self.assertEqual(returncode, 1)
+        self.assertEqual(result["error"]["code"], "bad_request")
+
+    def test_is_hub_message_uses_first_effective_agent(self):
+        # No "lead" key exists in this config: warning posts come from the
+        # first effective agent (north, bot 201), mirroring send_warning.
+        self.hub.warning_state = [{"message_id": "777", "tier2_id": None, "members": {}}]
+        self.assertTrue(self.hub.is_hub_message(msg(777, "Bridge status", author=201)))
+        self.assertFalse(self.hub.is_hub_message(msg(778, "Bridge status", author=201)))
+        self.assertFalse(self.hub.is_hub_message(msg(777, "Bridge status", author=202)))
+
+
 def load_cli():
     loader = importlib.machinery.SourceFileLoader("bridge_cli", str(Path(__file__).parents[1] / "bridge"))
     spec = importlib.util.spec_from_loader(loader.name, loader)
@@ -181,6 +246,10 @@ def load_cli():
      {"command": "working", "agent": "lead", "id": None, "eta": 4.0}),
     (["working", "1000"], "", {"ok": True},
      {"command": "working", "agent": "worker", "id": "1000", "eta": None}),
+    # Regression (LOI 3): the CLI must accept agent keys OUTSIDE the old
+    # anonymised sample set - deployment keys come from the hub config/registry.
+    (["wait", "--agent", "south", "--timeout", "0"], "", {"messages": [], "heartbeat": True},
+     {"command": "wait", "agent": "south", "timeout": 0.0}),
 ])
 def test_cli_encoding_arguments_stdin_and_json_stdout(argv, stdin, response, expected):
     module = load_cli()

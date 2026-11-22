@@ -21,6 +21,7 @@ import json
 import os
 import time
 from http import HTTPStatus
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Optional
 from urllib.parse import parse_qs, urlparse
@@ -30,6 +31,7 @@ from .auth import AdminAuth
 from .delivery import DeliveryState
 from .grants import Grant, GrantStore, scope_allows
 from .journal import retention_report
+from .keydrop import KeydropError
 from .ops_config import OpsConfig
 from .registry import AgentRegistry, RegistryError
 from .secrets_store import SecretStore
@@ -64,6 +66,7 @@ class AdminApp:
         status_provider: Optional[Callable[[], dict]] = None,
         static_dir: Optional[str] = None,
         credentials=None,
+        keydrop=None,
     ):
         self.registry = registry
         self.secrets = secrets_store
@@ -77,10 +80,18 @@ class AdminApp:
             "ready": True, "recovering": False, "journal_healthy": True,
             "online_bots": [], "expected_bots": [],
         })
-        self.static_dir = static_dir or os.path.join(os.path.dirname(__file__), "static")
+        # Resolve the static dir from THIS package's file location,
+        # absolutised: a bare dirname(__file__) can stay relative to the
+        # process CWD, which breaks the page in layouts where the CWD is
+        # not the package parent (integrated image, CWD=/app).
+        self.static_dir = static_dir or str(Path(__file__).resolve().parent / "static")
         # AdminCredentials or None (None in legacy token-only setups:
         # password endpoints then answer 501).
         self.credentials = credentials
+        # KeydropClient or None: the SSH-key intake towards the
+        # coordination VM. None = feature not wired on this deployment;
+        # the ssh-key endpoint then answers 502.
+        self.keydrop = keydrop
 
     # ------------------------------------------------------------------
     # identity / authorization
@@ -137,6 +148,7 @@ class AdminApp:
                 "kind": identity.kind,
                 "name": identity.name,
                 "scope": identity.grant.scope if identity.grant else None,
+                "totp_enabled": bool(self.credentials and self.credentials.totp_secret()),
             },
         }
 
@@ -199,6 +211,31 @@ class AdminApp:
                           {"length": len(body.get("bot_token", ""))},
                           grant_id=identity.grant_id)
         return 200, {"agent": self.registry.public_get(key)}
+
+    def set_ssh_key(self, identity: Identity, key: str, body: dict, headers):
+        """Install an agent's SSH public key on the coordination VM.
+
+        Sensitive (spec 6 class): admin session + step-up, or a full
+        grant. The page itself performs the install through the
+        keydrop account - no human intermediary (owner decision
+        2026-11-22). The registry is stamped ONLY after the VM-side
+        intake confirmed; any transport failure is a 502 and leaves
+        the profile untouched."""
+        self.authorize(identity, "set_ssh_key")  # sensitive: read/operate denied
+        self.require_step_up(identity, headers)
+        profile = self.registry.get(key)  # must exist
+        if self.keydrop is None:
+            raise KeydropError("ssh key intake is not wired on this deployment")
+        fingerprint = self.keydrop.submit(key, body.get("public_key", ""))
+        profile = self.registry.record_ssh_key(key, fingerprint)
+        self.audit.record(identity.name, "set_ssh_key", key,
+                          {"fingerprint": fingerprint},
+                          grant_id=identity.grant_id)
+        return 200, {
+            "agent": self.registry.public_get(key),
+            "fingerprint": fingerprint,
+            "ssh_key_added_at": profile.ssh_key_added_at,
+        }
 
     def queue(self, identity: Identity, key: str):
         self.authorize(identity, "view")
@@ -325,6 +362,30 @@ class AdminApp:
         self.audit.record("admin", "create_recovery_code", "", {})
         return 201, {"recovery_code": code}  # shown exactly once
 
+    def enroll_totp(self, identity: Identity, body: dict):
+        """Enroll a TOTP secret for step-up auth (admin session +
+        current password). Returns the secret + otpauth URI so the
+        admin can add it to an authenticator app; from then on,
+        sensitive ops require the current 6-digit code."""
+        self._require_admin_session(identity)
+        credentials = self._require_credentials()
+        if not credentials.verify(body.get("current_password", "")):
+            raise PermissionError("current password is wrong")
+        from .totp import generate_secret, otpauth_uri
+        secret = generate_secret()
+        credentials.set_totp_secret(secret)
+        self.audit.record("admin", "enroll_totp", "", {})
+        return 201, {"totp_secret": secret, "otpauth_uri": otpauth_uri(secret)}
+
+    def disable_totp(self, identity: Identity, body: dict):
+        self._require_admin_session(identity)
+        credentials = self._require_credentials()
+        if not credentials.verify(body.get("current_password", "")):
+            raise PermissionError("current password is wrong")
+        credentials.clear_totp()
+        self.audit.record("admin", "disable_totp", "", {})
+        return 200, {"ok": True}
+
     def recover_password(self, body: dict):
         """Forgot-password path from the login screen: recovery code +
         new password. Public endpoint - the code IS the credential.
@@ -367,7 +428,7 @@ def make_handler(app: AdminApp):
             self.wfile.write(body)
 
         def _send_page(self):
-            page = os.path.join(app.static_dir, "admin.html")
+            page = Path(app.static_dir) / "admin.html"
             try:
                 with open(page, "rb") as fh:
                     body = fh.read()
@@ -423,6 +484,8 @@ def make_handler(app: AdminApp):
                 return self._send_json(status, payload)
             except PermissionError as exc:
                 return self._send_json(403, {"error": str(exc)})
+            except KeydropError as exc:
+                return self._send_json(502, {"error": str(exc)})
             except (RegistryError, ValueError, KeyError, RuntimeError) as exc:
                 return self._send_json(400, {"error": str(exc)})
 
@@ -452,6 +515,8 @@ def make_handler(app: AdminApp):
                     return app.set_enabled(identity, key, True, body)
                 if action == "token" and method == "POST":
                     return app.set_token(identity, key, body, headers)
+                if action == "ssh-key" and method == "POST":
+                    return app.set_ssh_key(identity, key, body, headers)
                 if action == "queue" and method == "GET":
                     return app.queue(identity, key)
             if len(parts) == 5 and parts[:2] == ["api", "agents"] and parts[3] == "queue":
@@ -480,6 +545,10 @@ def make_handler(app: AdminApp):
                 return app.change_password(identity, body)
             if parts == ["api", "recovery-code"] and method == "POST":
                 return app.create_recovery_code(identity)
+            if parts == ["api", "totp", "enroll"] and method == "POST":
+                return app.enroll_totp(identity, body)
+            if parts == ["api", "totp", "disable"] and method == "POST":
+                return app.disable_totp(identity, body)
             return 404, {"error": f"no route for {method} {path}"}
 
         do_GET = lambda self: self._dispatch("GET")
