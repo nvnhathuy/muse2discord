@@ -206,8 +206,20 @@
     <label>Discord bot user id <input id="f-botid" type="text"></label>
     <label>Username bot <input id="f-botuser" type="text"></label>
     <label>Các dạng gọi tên (phân tách bằng dấu phẩy) <input id="f-tokens" type="text" size="44"></label>
-    <label>Loại ghế
+    <label id="f-seat-row">Loại ghế
       <select id="f-seat"><option value="live">Ghế agent sống</option><option value="api">Ghế API</option></select></label>
+    <label id="f-kind-row">Loại agent
+      <select id="f-kind"><option value="ssh">SSH — agent có máy riêng, nối hub qua cầu</option><option value="api">API — hub tự chạy bằng API key của hãng model</option></select>
+      <span class="muted">Loại chốt ngay lúc tạo, không đổi được về sau. Chọn API thì điền thêm khối API key bên dưới; agent API chạy ngay trong hub, không cần máy riêng.</span></label>
+    <div id="f-api-block">
+      <label>Provider
+        <select id="f-provider"><option value="gemini">Gemini (Google)</option><option value="openai">OpenAI</option></select>
+        <span class="muted">Hãng cung cấp model cho agent này. Đích gọi bị ghim cứng trong hub theo provider — không đổi đích khác được.</span></label>
+      <label>API key <input id="f-apikey" type="password" size="44" autocomplete="off">
+        <span class="muted">Key của hãng model, dán nguyên văn. Key được lưu trong file riêng quyền 0600 trên hub, không hiện lại ở bất kỳ đâu sau khi lưu.</span></label>
+      <label>Danh sách model <textarea id="f-models" rows="4" style="width:100%"></textarea>
+        <span class="muted">Mỗi model một dòng (hoặc cách nhau bằng dấu phẩy). Hub gọi đua tất cả model trong danh sách, lấy đáp án thành công đầu tiên. Để trống với Gemini thì dùng danh sách gợi ý mặc định.</span></label>
+    </div>
     <label><input id="f-all" type="checkbox"> Nhận tin “tất cả”</label>
     <label>Vai trò <input id="f-role" type="text"></label>
     <label>Mô tả <input id="f-desc" type="text" size="44"></label>
@@ -510,26 +522,29 @@ async function refreshAgents() {
   const selects = [$("queue-agent"), $("grant-agent")];
   selects.forEach((s) => { s.innerHTML = ""; });
   for (const a of data.agents) {
+    const isApi = a.kind === "api";
     const tr = document.createElement("tr");
     tr.innerHTML =
-      `<td><b>${esc(a.display_name)}</b><br><span class="muted">${esc(a.key)} · ${esc(a.role || "")} · ${a.locked ? "khoá trong hub" : "đã mở khoá"}</span></td>` +
+      `<td><b>${esc(a.display_name)}</b><br><span class="muted">${esc(a.key)} · ${esc(a.role || "")} · ${a.locked ? "khoá trong hub" : "đã mở khoá"}</span>` +
+        (isApi ? `<br><span class="muted">Agent API chạy ngay trong hub — không cần kết nối, chỉ cần bot Discord đúng token đã khai.</span>` : "") + `</td>` +
       `<td>${a.enabled ? '<span class="on">Đang bật</span>' : '<span class="off">Tạm dừng</span>' +
         (a.pause_reason ? `<br><span class="muted">${esc(a.pause_reason)}</span>` : "")}</td>` +
       `<td>${a.online ? '<span class="on">online</span>' : '<span class="off">offline</span>'}</td>` +
       `<td>${a.pending} chờ / ${a.leases} lease</td>` +
       `<td>${a.token_configured ? "đã có (" + a.token_length + " ký tự)" : "CHƯA CÓ"}</td>` +
-      `<td>${a.seat_type === "api" ? "API" : "sống"}</td>` +
+      `<td>${isApi ? "API" + (a.api ? `<br><span class="muted">${esc(a.api.provider)} · ${a.api.models.length} model · ${a.api.has_key ? "đã có key" : "CHƯA CÓ KEY"}</span>` : `<br><span class="muted">chưa có cấu hình API</span>`) : "SSH"}</td>` +
       `<td class="row-actions"></td>`;
     const cell = tr.querySelector(".row-actions");
     const mk = (label, fn) => { const b = document.createElement("button"); b.textContent = label; b.onclick = fn; cell.appendChild(b); };
     if (a.enabled) mk("Tạm dừng", () => pauseAgent(a));
     else mk("Mở lại", () => resumeAgent(a));
     mk("Sửa", () => openAgentDialog(a));
-    mk("Prompt kết nối", () => showConnectPrompt(a));
+    if (!isApi) mk("Prompt kết nối", () => showConnectPrompt(a));
     mk("Hàng chờ", () => { $("queue-agent").value = a.key; loadQueue(); });
     if (canSensitive()) {
       mk("Thay token", () => setToken(a));
-      mk("SSH key", () => openSshKeyDialog(a));
+      if (isApi) mk("Đổi API key", () => setApiKey(a));
+      else mk("SSH key", () => openSshKeyDialog(a));
       mk(a.locked ? "Mở khoá" : "Khoá", () => toggleLock(a));
       mk("Xoá", () => deleteAgent(a));
     }
@@ -558,6 +573,13 @@ async function setToken(a) {
   const token = prompt(`Token bot mới cho ${a.display_name} (không hiển thị lại sau khi lưu):`);
   if (!token) return;
   try { await api("POST", `/api/agents/${a.key}/token`, { bot_token: token }, headers); note("Đã thay token."); refreshAgents(); }
+  catch (e) { note(e.message, true); }
+}
+async function setApiKey(a) {
+  const headers = stepUpHeaders(); if (!headers) return;
+  const key = prompt(`API key mới cho ${a.display_name} (key của hãng model; không hiển thị lại sau khi lưu):`);
+  if (!key) return;
+  try { await api("POST", `/api/agents/${a.key}/api-key`, { api_key: key }, headers); note("Đã đổi API key."); refreshAgents(); }
   catch (e) { note(e.message, true); }
 }
 async function deleteAgent(a) {
@@ -758,6 +780,13 @@ $("laws-prompt-copy-btn").onclick = async () => {
 $("laws-prompt-close-btn").onclick = () => $("laws-prompt-box").close();
 
 // ---------------------------------------------------------------- dialog
+const GEMINI_DEFAULT_MODELS = ["gemini-3.5-flash", "gemini-3.8-flash", "gemini-2.5-flash", "gemini-3.1-flash-lite"];
+function syncApiBlock() {
+  const isApi = $("f-kind").value === "api";
+  $("f-api-block").style.display = isApi ? "" : "none";
+  if (isApi && !$("f-models").value.trim())
+    $("f-models").value = $("f-provider").value === "gemini" ? GEMINI_DEFAULT_MODELS.join("\n") : "";
+}
 function openAgentDialog(a) {
   const isNew = !a;
   $("agent-dialog-title").textContent = isNew ? "Thêm agent" : `Sửa ${a.display_name}`;
@@ -775,6 +804,17 @@ function openAgentDialog(a) {
   $("f-notes").value = isNew ? "" : (a.notes || "");
   $("f-token").value = "";
   $("f-token-row").style.display = isNew ? "" : "none";
+  // Kind (issue #22) is chosen only at creation; afterwards it is a
+  // fact shown in the list, not an editable field.
+  $("f-kind-row").style.display = isNew ? "" : "none";
+  $("f-seat-row").style.display = isNew ? "none" : "";
+  $("f-kind").value = "ssh";
+  $("f-provider").value = "gemini";
+  $("f-apikey").value = "";
+  $("f-models").value = "";
+  $("f-api-block").style.display = "none";
+  $("f-kind").onchange = syncApiBlock;
+  $("f-provider").onchange = () => { $("f-models").value = ""; syncApiBlock(); };
   $("agent-dialog").showModal();
   $("agent-save-btn").onclick = async (ev) => {
     ev.preventDefault();
@@ -792,20 +832,33 @@ function openAgentDialog(a) {
     };
     try {
       let createdKey = null;
+      let createdKind = null;
       if (isNew) {
         payload.key = $("f-key").value.trim();
+        payload.kind = $("f-kind").value;
+        payload.seat_type = payload.kind === "api" ? "api" : "live";
         const token = $("f-token").value.trim();
         if (token) payload.bot_token = token;
-        await api("POST", "/api/agents", payload);
-        note("Đã thêm agent (đang tạm dừng).");
+        let headers;
+        if (payload.kind === "api") {
+          // Handing the hub a provider key is a sensitive operation:
+          // the server demands a fresh step-up, like other key work.
+          headers = stepUpHeaders(); if (!headers) return;
+          payload.provider = $("f-provider").value;
+          payload.api_key = $("f-apikey").value.trim();
+          payload.models = $("f-models").value.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
+        }
+        await api("POST", "/api/agents", payload, headers);
+        note(payload.kind === "api" ? "Đã thêm agent API (đang tạm dừng)." : "Đã thêm agent (đang tạm dừng).");
         createdKey = payload.key;
+        createdKind = payload.kind;
       } else {
         await api("PATCH", `/api/agents/${a.key}`, payload);
         note("Đã lưu.");
       }
       $("agent-dialog").close();
       await refreshAgents();
-      if (createdKey) {
+      if (createdKey && createdKind !== "api") {
         const created = lastAgents.find((x) => x.key === createdKey);
         if (created) showConnectPrompt(created);
       }

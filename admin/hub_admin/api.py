@@ -26,6 +26,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Optional
 from urllib.parse import parse_qs, urlparse
 
+from .api_agents import ApiAgentsError, ApiAgentsStore
 from .audit import AuditLog
 from .auth import AdminAuth
 from .credentials import DEFAULT_PASSWORD
@@ -70,6 +71,7 @@ class AdminApp:
         credentials=None,
         keydrop=None,
         laws: Optional[LawsStore] = None,
+        api_agents: Optional[ApiAgentsStore] = None,
     ):
         self.registry = registry
         self.secrets = secrets_store
@@ -101,6 +103,10 @@ class AdminApp:
         # working with the same on-disk location.
         self.laws = laws or LawsStore(os.path.join(
             os.path.dirname(os.path.abspath(registry.state_path)), "laws.json"))
+        # API-agent configuration (issue #22): same registry dir, same
+        # fallback pattern as the laws store.
+        self.api_agents = api_agents or ApiAgentsStore(
+            os.path.dirname(os.path.abspath(registry.state_path)))
 
     # ------------------------------------------------------------------
     # identity / authorization
@@ -155,6 +161,15 @@ class AdminApp:
     # ------------------------------------------------------------------
     # endpoint handlers (each returns (status, payload))
     # ------------------------------------------------------------------
+    def _decorate_api(self, row: dict) -> dict:
+        """Attach the public `api` block (provider / models / key
+        presence - never the key) to rows of API agents (issue #22)."""
+        if row.get("kind") == "api":
+            block = self.api_agents.public_block(row["key"])
+            if block is not None:
+                row["api"] = block
+        return row
+
     def overview(self, identity: Identity):
         self.authorize(identity, "view")
         status = self.status_provider()
@@ -163,7 +178,7 @@ class AdminApp:
             row = profile.public_dict(self.secrets.meta(profile.key))
             row.update(self.delivery.probe(profile.key))
             row["online"] = profile.key in (status.get("online_bots") or [])
-            agents.append(row)
+            agents.append(self._decorate_api(row))
         return 200, {
             "hub": status,
             "agents": agents,
@@ -179,18 +194,59 @@ class AdminApp:
 
     def list_agents(self, identity: Identity):
         self.authorize(identity, "view")
-        return 200, {"agents": self.registry.public_list()}
+        return 200, {"agents": [self._decorate_api(row)
+                                for row in self.registry.public_list()]}
 
-    def create_agent(self, identity: Identity, body: dict):
+    def create_agent(self, identity: Identity, body: dict, headers=None):
         if identity.kind != "admin":
             raise PermissionError("only the admin principal can create agents")
+        is_api = body.get("kind") == "api" or (
+            body.get("kind") is None and body.get("seat_type") == "api")
+        api_cfg = None
+        if is_api:
+            # Creating an API agent hands the hub a provider key: a
+            # sensitive operation (issue #22 sections 1.5, 2.3) - and
+            # everything is validated BEFORE the profile exists, so a
+            # bad request never leaves a half-configured agent behind.
+            self.authorize(identity, "set_api_config")
+            self.require_step_up(identity, headers)
+            from .api_agents import validate_models, validate_provider
+            provider = validate_provider(body.get("provider", ""))
+            models = validate_models(body.get("models"), provider)
+            api_key = (body.get("api_key") or "").strip()
+            if not api_key:
+                raise ApiAgentsError("api_key is required for an API agent")
+            api_cfg = (provider, models, api_key)
         profile = self.registry.create(body)
         token = body.get("bot_token")
         if token:
             self.secrets.set(profile.key, token)
         self.audit.record(identity.name, "create_agent", profile.key,
                           {"display_name": profile.display_name}, grant_id=identity.grant_id)
-        return 201, {"agent": self.registry.public_get(profile.key)}
+        if api_cfg is not None:
+            provider, models, api_key = api_cfg
+            self.api_agents.set_config(profile.key, provider, models)
+            self.api_agents.set_key(profile.key, api_key)
+            self.audit.record(identity.name, "set_api_config", profile.key,
+                              {"provider": provider, "models": len(models)},
+                              grant_id=identity.grant_id)
+        return 201, {"agent": self._decorate_api(self.registry.public_get(profile.key))}
+
+    def set_api_key(self, identity: Identity, key: str, body: dict, headers):
+        """Replace the provider key of an API agent (issue #22).
+
+        Sensitive: admin session or full grant, plus step-up. The key
+        is written to its 0600 file; the audit records only the event
+        - never the key or any part of it."""
+        self.authorize(identity, "set_api_key")
+        self.require_step_up(identity, headers)
+        profile = self.registry.get(key)  # must exist
+        if profile.kind != "api":
+            raise ApiAgentsError(f"agent {key!r} is not an API agent")
+        self.api_agents.set_key(key, body.get("api_key", ""))
+        self.audit.record(identity.name, "set_api_key", key, {},
+                          grant_id=identity.grant_id)
+        return 200, {"agent": self._decorate_api(self.registry.public_get(key))}
 
     def update_agent(self, identity: Identity, key: str, body: dict):
         if identity.kind == "agent":
@@ -225,6 +281,11 @@ class AdminApp:
         self.secrets.delete(key)
         self.audit.record(identity.name, "delete_agent", key,
                           {"hard": True}, grant_id=identity.grant_id)
+        if profile.kind == "api" and self.api_agents.delete_config(key):
+            # Deleting an API agent removes its provider config and
+            # key file with it (issue #22 section 2.3).
+            self.audit.record(identity.name, "delete_api_config", key, {},
+                              grant_id=identity.grant_id)
         return 200, {"deleted": key}
 
     def set_token(self, identity: Identity, key: str, body: dict, headers):
@@ -618,7 +679,7 @@ def make_handler(app: AdminApp):
             if parts == ["api", "agents"] and method == "GET":
                 return app.list_agents(identity)
             if parts == ["api", "agents"] and method == "POST":
-                return app.create_agent(identity, body)
+                return app.create_agent(identity, body, headers)
             if len(parts) == 3 and parts[:2] == ["api", "agents"]:
                 key = parts[2]
                 if method == "GET":
@@ -636,6 +697,8 @@ def make_handler(app: AdminApp):
                     return app.set_enabled(identity, key, True, body)
                 if action == "token" and method == "POST":
                     return app.set_token(identity, key, body, headers)
+                if action == "api-key" and method == "POST":
+                    return app.set_api_key(identity, key, body, headers)
                 if action == "ssh-key" and method == "POST":
                     return app.set_ssh_key(identity, key, body, headers)
                 if action == "lock" and method == "POST":
