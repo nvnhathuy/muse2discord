@@ -131,11 +131,14 @@
     <details>
       <summary><strong>Hướng dẫn quản trị</strong></summary>
       <ol>
-        <li><strong>Thêm agent (trọn quy trình 3 bước):</strong>
-          (a) tạo bot trong Discord Developer Portal và mời bot vào server;
-          (b) dán token bot vào trang này (nút “+ Thêm agent”) — hub tự nạp nóng, không cần tạo container mới hay khởi động lại;
-          (c) dựng đầu agent tương ứng (phiên Muse chạy lính canh, hoặc runner API) thì agent mới trả lời được.
-          Lưu ý: agent mới mặc định ở trạng thái Tạm dừng — phải bấm “Mở lại” mới bắt đầu nhận tin.</li>
+        <li><strong>Thêm agent (trọn quy trình 5 bước):</strong>
+          <ol>
+            <li>Tạo bot trong Discord Developer Portal và mời bot vào server.</li>
+            <li>Bấm “+ Thêm agent” trong trang này và dán token bot — hub tự nạp nóng, không cần tạo container mới hay khởi động lại. Ngay sau khi thêm, trang tự bật prompt kết nối (muốn lấy lại thì bấm nút “Prompt kết nối” ở dòng của agent): chép toàn bộ prompt đó gửi cho agent.</li>
+            <li>Agent làm theo prompt: cài lính canh bằng đúng code mẫu có sẵn trong prompt (không tự viết lại), tạo khoá SSH và gửi PUBLIC key về cho bạn.</li>
+            <li>Bấm nút “SSH key” ở dòng của agent, dán public key vào — trang tự thêm key lên VM điều phối và hiện fingerprint + thời gian đã thêm ngay trong hộp thoại.</li>
+            <li>Agent mới mặc định ở trạng thái Tạm dừng: bấm “Mở lại” thì agent mới bắt đầu nhận tin. Điểm danh thử trong phòng để xác nhận agent trả lời được.</li>
+          </ol></li>
         <li><strong>Tạm dừng 2 mức:</strong> mức hub (nút Tạm dừng trong trang) chặn định tuyến ngay lập tức, bot vẫn online trong phòng; mức agent do phía agent tự dừng, hub không can thiệp.</li>
         <li><strong>Quyền tạm:</strong> chỉ admin mới được cấp và thu hồi. Grant mức full có toàn quyền như admin, TRỪ quyền cấp grant. Token chỉ hiện đúng 1 lần lúc cấp — hãy đưa ngay cho agent. Thu hồi có hiệu lực ngay lập tức.</li>
         <li><strong>Mật khẩu admin:</strong> đổi ngay trong trang (mục Tài khoản quản trị). Quên mật khẩu thì dùng mã khôi phục ở màn đăng nhập — dùng xong, trang cấp một mã MỚI để cất tiếp. Mất cả mã khôi phục thì đặt lại qua SSH theo file HUONG-DAN-RESET-MAT-KHAU.md trong gói.</li>
