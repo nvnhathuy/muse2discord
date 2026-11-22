@@ -29,7 +29,14 @@ from .registry import AgentRegistry
 from .secrets_store import SecretStore
 
 
-def build_app(state_dir: str) -> AdminApp:
+def build_app(state_dir: str, *, delivery=None, status_provider=None) -> AdminApp:
+    """Build the admin app over a state dir.
+
+    delivery / status_provider are the integrated-mode seams
+    (PATCH-POINTS section 5): the hub process passes a DeliveryFacade
+    over its live state and a HubSnapshot provider; standalone mode
+    leaves both None and keeps the reference DeliveryState + stub
+    status, exactly as before."""
     os.makedirs(state_dir, exist_ok=True)
     secrets_store = SecretStore(os.path.join(state_dir, "bot_secrets.json"))
     registry = AgentRegistry(
@@ -56,10 +63,22 @@ def build_app(state_dir: str) -> AdminApp:
                     legacy = fh.read().strip()
         if legacy:
             credentials.set_password(legacy)
+
+    def step_up(presented: str) -> bool:
+        # Integrated mode (spec 6): once a TOTP secret is enrolled, the
+        # step-up proof is the current authenticator code; before
+        # enrollment it is the admin password re-entered.
+        secret = getattr(credentials, "totp_secret")()
+        if secret:
+            from .totp import verify_totp
+            return verify_totp(secret, presented)
+        return credentials.verify(presented)
+
     auth = AdminAuth(
         credentials.verify,
         idle_seconds=int(ops.get("admin_session_idle_seconds")),
         version_provider=credentials.version,
+        step_up_verifier=step_up,
     )
     return AdminApp(
         registry=registry,
@@ -67,7 +86,7 @@ def build_app(state_dir: str) -> AdminApp:
         grants=GrantStore(os.path.join(state_dir, "grants.json")),
         audit=AuditLog(os.path.join(state_dir, "admin_audit.jsonl")),
         ops=ops,
-        delivery=DeliveryState(
+        delivery=delivery if delivery is not None else DeliveryState(
             lease_base=int(ops.get("lease_base_seconds")),
             lease_max=int(ops.get("lease_max_seconds")),
         ),
@@ -76,6 +95,7 @@ def build_app(state_dir: str) -> AdminApp:
         journal_path=os.environ.get(
             "HUB_JOURNAL_PATH", os.path.join(state_dir, "bridge.jsonl")
         ),
+        status_provider=status_provider,
     )
 
 

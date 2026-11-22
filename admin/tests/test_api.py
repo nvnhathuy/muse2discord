@@ -248,6 +248,15 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(res.status, 200)
         self.assertIn("Quản trị Hub", body)
 
+    def test_page_has_admin_guide(self):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        conn.request("GET", "/")
+        res = conn.getresponse()
+        body = res.read().decode("utf-8")
+        conn.close()
+        self.assertEqual(res.status, 200)
+        self.assertIn("Hướng dẫn quản trị", body)
+
 
 if __name__ == "__main__":
     unittest.main()

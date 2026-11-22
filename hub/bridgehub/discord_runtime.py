@@ -2,7 +2,6 @@
 import asyncio
 import logging
 
-from .config import AGENTS
 from .core import BridgeError, Message
 
 log = logging.getLogger(__name__)
@@ -37,12 +36,26 @@ class DiscordRuntime:
         self.hub = None
         self.clients = {}
         self.channels = {}
-        self.runtime_agents = (*AGENTS, "hub") if config.hub_bot_id else AGENTS
+        # The runtime supervises exactly the EFFECTIVE agent set from the
+        # config (shared-registry keys in integrated mode; the env-built
+        # lead/worker/deputy set in legacy mode) - never the AGENTS
+        # constant, which is only the legacy default key list.
+        self.runtime_agents = tuple(config.agents) + (("hub",) if config.hub_bot_id else ())
+        # Per-key supervise tasks (PATCH-POINTS section 4): run() registers
+        # the initial set here; the registry connector adds/removes entries
+        # as agents come and go, instead of a fixed task tuple.
+        self.agent_tasks = {}
         self.online = {a: asyncio.Event() for a in self.runtime_agents}
         self.warning_ids = set()
         self.warning_texts = set()
         self.recovery_requested = asyncio.Event()
         self.retry_base, self.retry_max = retry_base, retry_max
+
+    def _default_agent(self):
+        # Fallback identity for hub-originated messages when no dedicated
+        # hub bot is configured: the first EFFECTIVE agent (the "lead" key
+        # in legacy mode, the first registry key in integrated mode).
+        return next(iter(self.config.agents))
 
     def channel(self, agent):
         if not self.online[agent].is_set() or agent not in self.channels:
@@ -69,9 +82,10 @@ class DiscordRuntime:
         return all(event.is_set() for event in self.online.values())
 
     async def send_warning(self, content, edit_id=None, mention=False):
-        # A dedicated hub identity is preferred; otherwise use lead and exclude
-        # our own generated messages by ID/content from ingestion and history.
-        channel = self.channel("hub" if self.config.hub_bot_id else "lead")
+        # A dedicated hub identity is preferred; otherwise use the default
+        # (first effective) agent and exclude our own generated messages by
+        # ID/content from ingestion and history.
+        channel = self.channel("hub" if self.config.hub_bot_id else self._default_agent())
         allowed = (self.discord.AllowedMentions(users=[self.discord.Object(id=self.config.owner_id)],
                                                roles=False, everyone=False, replied_user=False)
                    if mention else self.discord.AllowedMentions.none())
@@ -84,7 +98,7 @@ class DiscordRuntime:
         return str(sent.id)
 
     def _hub_message(self, message):
-        sender = self.config.hub_bot_id or self.config.agents["lead"].bot_id
+        sender = self.config.hub_bot_id or self.config.agents[self._default_agent()].bot_id
         if message.author.id != sender:
             return False
         persisted = {g[key] for g in getattr(self.hub, "warning_state", [])
@@ -206,14 +220,52 @@ class DiscordRuntime:
                 self.recovery_requested.set()
 
     async def run(self):
-        tasks = [asyncio.create_task(self.supervise(a)) for a in self.runtime_agents]
-        tasks.append(asyncio.create_task(self.recovery_loop()))
+        for a in self.runtime_agents:
+            if a not in self.agent_tasks or self.agent_tasks[a].done():
+                self.agent_tasks[a] = asyncio.create_task(self.supervise(a))
+        recovery = asyncio.create_task(self.recovery_loop())
+        tasks = [*self.agent_tasks.values(), recovery]
         workers = asyncio.gather(*tasks)
         try:
             # Own cancellation here: cancelling gather directly can return as
             # soon as one child exits, before the other clients finish closing.
             await asyncio.shield(workers)
         finally:
+            # Include supervise tasks the registry connector added later.
+            tasks = list({*tasks, *self.agent_tasks.values()})
             for task in tasks:
                 task.cancel()
             await finish_cleanup(asyncio.gather(workers, *tasks, return_exceptions=True))
+
+
+class RuntimeConnector:
+    """BotLifecycle connector over DiscordRuntime (PATCH-POINTS section 4).
+
+    connect(key, token): start a fresh supervise(key) task. The token is
+    NOT passed to the client directly - _one_client reads it from
+    config.agents, which the registry watcher has already updated, so a
+    reconnect after a token change uses the new token.
+    disconnect(key): cancel that key's supervise task; the client is
+    closed by supervise's own cleanup path (_close_client/finish_cleanup).
+    """
+
+    def __init__(self, runtime):
+        self.runtime = runtime
+
+    async def connect(self, key, token):
+        runtime = self.runtime
+        runtime.online.setdefault(key, asyncio.Event())
+        task = runtime.agent_tasks.get(key)
+        if task is not None and not task.done():
+            return
+        runtime.agent_tasks[key] = asyncio.create_task(runtime.supervise(key))
+
+    async def disconnect(self, key):
+        runtime = self.runtime
+        task = runtime.agent_tasks.pop(key, None)
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        if key in runtime.online:
+            runtime.online[key].clear()
+        runtime.channels.pop(key, None)

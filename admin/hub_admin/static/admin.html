@@ -100,6 +100,12 @@
     <button id="recovery-gen-btn">Tạo mã khôi phục mới</button>
     <p class="muted">Mã chỉ hiện MỘT lần — hãy cất nơi an toàn. Tạo mã mới sẽ vô hiệu mã cũ. Mã dùng được 1 lần để đặt lại mật khẩu ngay tại màn đăng nhập.</p>
     <div id="recovery-issued"></div>
+    <h3>Xác thực hai lớp (TOTP) cho thao tác nhạy cảm</h3>
+    <p class="muted" id="totp-status">…</p>
+    <label>Mật khẩu hiện tại (để ghi danh / tắt TOTP) <input id="totp-pw" type="password" size="30" autocomplete="off"></label>
+    <button id="totp-enroll-btn">Ghi danh TOTP</button>
+    <button id="totp-disable-btn">Tắt TOTP</button>
+    <div id="totp-issued"></div>
   </section>
 
   <section class="card">
@@ -108,6 +114,26 @@
     <h3>Audit quản trị</h3>
     <div id="audit-box" class="muted">…</div>
     <button id="audit-load-btn">Tải audit</button>
+  </section>
+
+  <section class="card">
+    <details>
+      <summary><strong>Hướng dẫn quản trị</strong></summary>
+      <ol>
+        <li><strong>Thêm agent (trọn quy trình 3 bước):</strong>
+          (a) tạo bot trong Discord Developer Portal và mời bot vào server;
+          (b) dán token bot vào trang này (nút “+ Thêm agent”) — hub tự nạp nóng, không cần tạo container mới hay khởi động lại;
+          (c) dựng đầu agent tương ứng (phiên Muse chạy lính canh, hoặc runner API) thì agent mới trả lời được.
+          Lưu ý: agent mới mặc định ở trạng thái Tạm dừng — phải bấm “Mở lại” mới bắt đầu nhận tin.</li>
+        <li><strong>Tạm dừng 2 mức:</strong> mức hub (nút Tạm dừng trong trang) chặn định tuyến ngay lập tức, bot vẫn online trong phòng; mức agent do phía agent tự dừng, hub không can thiệp.</li>
+        <li><strong>Quyền tạm:</strong> chỉ admin mới được cấp và thu hồi. Grant mức full có toàn quyền như admin, TRỪ quyền cấp grant. Token chỉ hiện đúng 1 lần lúc cấp — hãy đưa ngay cho agent. Thu hồi có hiệu lực ngay lập tức.</li>
+        <li><strong>Mật khẩu admin:</strong> đổi ngay trong trang (mục Tài khoản quản trị). Quên mật khẩu thì dùng mã khôi phục ở màn đăng nhập — dùng xong, trang cấp một mã MỚI để cất tiếp. Mất cả mã khôi phục thì đặt lại qua SSH theo file HUONG-DAN-RESET-MAT-KHAU.md trong gói.</li>
+        <li><strong>TOTP:</strong> ghi danh trong trang (mục Tài khoản quản trị) để các thao tác nhạy cảm dùng mã 6 số trong ứng dụng xác thực thay cho mật khẩu. Tắt TOTP thì xác thực lại quay về dùng mật khẩu.</li>
+        <li><strong>Cấu hình vận hành:</strong> mỗi ô đều có ghi chú dễ hiểu ngay bên dưới — đọc ghi chú trước khi đổi giá trị.</li>
+        <li><strong>Nhật ký &amp; Audit:</strong> audit ghi lại mọi thao tác thay đổi trên trang; nếu thao tác do agent được uỷ quyền thực hiện, bản ghi kèm theo id của grant đó.</li>
+        <li><strong>Phiên đăng nhập:</strong> trang tự đăng xuất sau thời gian không thao tác (ô admin_session_idle_seconds trong Cấu hình vận hành). Muốn thoát ngay, bấm nút “Đăng xuất” ở đầu trang.</li>
+      </ol>
+    </details>
   </section>
 </main>
 
@@ -139,6 +165,7 @@
 const $ = (id) => document.getElementById(id);
 let grantToken = null; // when logged in via a temporary grant
 let grantScope = null; // scope of that grant, from /api/overview
+let totpEnabled = false; // step-up mode, from /api/overview identity
 const canSensitive = () => !grantToken || grantScope === "full";
 
 function note(text, isError) {
@@ -156,7 +183,10 @@ async function api(method, path, body, headers) {
 }
 function stepUpHeaders() {
   if (grantToken) return {}; // a full grant is itself the admin's delegation
-  const token = prompt("Thao tác nhạy cảm — nhập lại token quản trị để xác thực:");
+  const label = totpEnabled
+    ? "Thao tác nhạy cảm — nhập mã TOTP 6 số trong ứng dụng xác thực:"
+    : "Thao tác nhạy cảm — nhập lại mật khẩu quản trị để xác thực:";
+  const token = prompt(label);
   return token ? { "X-Admin-Reauth": token } : null;
 }
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -210,6 +240,13 @@ $("login-grant-btn").onclick = async () => {
 // ---------------------------------------------------------------- agents
 async function refreshAgents() {
   const data = await api("GET", "/api/overview");
+  if (data.identity) {
+    totpEnabled = !!data.identity.totp_enabled;
+    const el = $("totp-status");
+    if (el) el.textContent = totpEnabled
+      ? "TOTP đang BẬT: thao tác nhạy cảm cần mã 6 số trong ứng dụng xác thực."
+      : "TOTP chưa ghi danh: thao tác nhạy cảm tạm dùng mật khẩu nhập lại. Nên ghi danh TOTP.";
+  }
   const hub = data.hub || {};
   $("hub-status").textContent =
     `Hub: ${hub.ready ? "sẵn sàng" : "chưa sẵn sàng"}${hub.recovering ? " (đang khôi phục)" : ""} · ` +
@@ -431,6 +468,25 @@ $("recovery-gen-btn").onclick = async () => {
     $("recovery-issued").innerHTML =
       `Mã khôi phục (chỉ hiện lần này, hãy cất ngay): <code>${esc(data.recovery_code)}</code>`;
     refreshAudit();
+  } catch (e) { note(e.message, true); }
+};
+$("totp-enroll-btn").onclick = async () => {
+  try {
+    const data = await api("POST", "/api/totp/enroll", { current_password: $("totp-pw").value });
+    $("totp-issued").innerHTML =
+      `Bí mật TOTP (nhập vào ứng dụng xác thực, chỉ hiện lần này): <code>${esc(data.totp_secret)}</code>` +
+      `<br><span class="muted">Hoặc mở liên kết: ${esc(data.otpauth_uri)}</span>`;
+    $("totp-pw").value = "";
+    note("Đã ghi danh TOTP. Từ giờ thao tác nhạy cảm cần mã 6 số.");
+    refreshAgents();
+  } catch (e) { note(e.message, true); }
+};
+$("totp-disable-btn").onclick = async () => {
+  try {
+    await api("POST", "/api/totp/disable", { current_password: $("totp-pw").value });
+    $("totp-pw").value = ""; $("totp-issued").innerHTML = "";
+    note("Đã tắt TOTP. Thao tác nhạy cảm quay về nhập lại mật khẩu.");
+    refreshAgents();
   } catch (e) { note(e.message, true); }
 };
 

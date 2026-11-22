@@ -31,6 +31,35 @@ class Config:
     external_alert_url: str = ""
     hub_bot_id: int = 0
     hub_bot_token: str = ""
+    # Integrated mode (PATCH-POINTS section 1): when set, the shared
+    # registry under this directory is the source of truth for the agent
+    # set; env only bootstraps it on first boot. Empty = legacy env-only
+    # behaviour, exactly as before.
+    registry_dir: str = ""
+
+    @staticmethod
+    def _registry_agents(registry_dir):
+        """Build the agent set + receive deadlines from the shared registry."""
+        from hub_integration.registry_sync import RegistryView, bootstrap_state
+        registry, secrets = bootstrap_state(registry_dir, os.environ)
+        view = RegistryView(registry, secrets)
+        agents, deadlines = {}, {}
+        for key, profile in view.agents().items():
+            if not profile.token or profile.token.startswith("replace-"):
+                raise ValueError(f"agent {key} has no usable bot token in the shared registry")
+            if profile.bot_id <= 0:
+                raise ValueError(f"agent {key} has no valid bot ID in the shared registry")
+            if not profile.call_tokens or any(not t.strip() for t in profile.call_tokens):
+                raise ValueError(f"agent {key} has no usable call tokens in the shared registry")
+            agents[key] = Agent(key, profile.bot_id, profile.token,
+                                profile.display_name, tuple(profile.call_tokens))
+            if profile.receive_deadline is not None:
+                deadlines[key] = float(profile.receive_deadline)
+            else:
+                deadlines[key] = float(os.getenv(f"{key.upper()}_RECEIVE_DEADLINE", "180"))
+        if not agents:
+            raise ValueError("shared registry has no agents; seed it via AGENT_KEYS env on first boot")
+        return agents, deadlines
 
     @classmethod
     def from_env(cls):
@@ -40,29 +69,37 @@ class Config:
                 raise ValueError(f"{name} must be positive")
             return value
 
-        defaults = {"lead": ("Lead", ["lead"]), "worker": ("Worker", ["worker"]),
-                    "deputy": ("Deputy", ["deputy"])}
-        agents = {}
-        for key, (name, tokens) in defaults.items():
-            prefix = key.upper()
-            token = os.environ[f"{prefix}_BOT_TOKEN"]
-            if not token or token.startswith("replace-"):
-                raise ValueError(f"Set {prefix}_BOT_TOKEN locally")
-            calls = json.loads(os.getenv(f"{prefix}_CALL_TOKENS", json.dumps(tokens)))
-            if not isinstance(calls, list) or not calls or any(
-                    not isinstance(t, str) or not t.strip() for t in calls):
-                raise ValueError(f"{prefix}_CALL_TOKENS must be a nonempty JSON string array")
-            agents[key] = Agent(key, positive(f"{prefix}_BOT_ID"), token,
-                                os.getenv(f"{prefix}_DISPLAY_NAME", name), tuple(calls))
+        registry_dir = os.getenv("BRIDGE_REGISTRY_DIR", "").strip()
+        if registry_dir:
+            agents, deadlines = cls._registry_agents(registry_dir)
+        else:
+            defaults = {"lead": ("Lead", ["lead"]), "worker": ("Worker", ["worker"]),
+                        "deputy": ("Deputy", ["deputy"])}
+            agents = {}
+            for key, (name, tokens) in defaults.items():
+                prefix = key.upper()
+                token = os.environ[f"{prefix}_BOT_TOKEN"]
+                if not token or token.startswith("replace-"):
+                    raise ValueError(f"Set {prefix}_BOT_TOKEN locally")
+                calls = json.loads(os.getenv(f"{prefix}_CALL_TOKENS", json.dumps(tokens)))
+                if not isinstance(calls, list) or not calls or any(
+                        not isinstance(t, str) or not t.strip() for t in calls):
+                    raise ValueError(f"{prefix}_CALL_TOKENS must be a nonempty JSON string array")
+                agents[key] = Agent(key, positive(f"{prefix}_BOT_ID"), token,
+                                    os.getenv(f"{prefix}_DISPLAY_NAME", name), tuple(calls))
+            # Legacy env-only branch: the agent set here IS the AGENTS
+            # default (built from `defaults` above), so iterating AGENTS
+            # cannot leak default keys into the registry path - the
+            # registry branch above builds deadlines from the registry.
+            deadlines = {a: float(os.getenv(f"{a.upper()}_RECEIVE_DEADLINE", "300" if a == "worker" else "180"))
+                         for a in AGENTS}
         owner = positive("OWNER_ID")
         ids = [a.bot_id for a in agents.values()]
-        if len(set(ids + [owner])) != 4:
-            raise ValueError("Owner and three bot IDs must be distinct")
+        if len(set(ids + [owner])) != len(ids) + 1:
+            raise ValueError("Owner and bot IDs must be distinct")
         count = int(os.getenv("CONTEXT_COUNT", "5"))
         if not 0 <= count <= 50:
             raise ValueError("CONTEXT_COUNT must be between 0 and 50")
-        deadlines = {a: float(os.getenv(f"{a.upper()}_RECEIVE_DEADLINE", "300" if a == "worker" else "180"))
-                     for a in AGENTS}
         if any(not math.isfinite(v) or v < 180 for v in deadlines.values()):
             raise ValueError("receive deadlines must be finite and at least 180 seconds")
         hub_id = int(os.getenv("HUB_BOT_ID", "0"))
@@ -76,4 +113,5 @@ class Config:
                    os.getenv("BRIDGE_JOURNAL", "/data/bridge.jsonl"),
                    os.getenv("BRIDGE_SOCKET", "/run/bridge.sock"), count, deadlines,
                    os.getenv("HEALTHCHECK_PING_URL", ""), os.getenv("BRIDGE_METRICS", ""),
-                   external == "true", os.getenv("BRIDGE_EXTERNAL_ALERT_URL", ""), hub_id, hub_token)
+                   external == "true", os.getenv("BRIDGE_EXTERNAL_ALERT_URL", ""), hub_id, hub_token,
+                   registry_dir)

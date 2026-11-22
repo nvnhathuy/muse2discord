@@ -8,6 +8,7 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && mkdir -p /data /run/bridge-v2 \
     && chown bridge:bridge /data /run/bridge-v2
 COPY bridgehub ./bridgehub
+COPY hub_integration ./hub_integration
 COPY bridge /usr/local/bin/bridge
 RUN chmod 755 /usr/local/bin/bridge
 # /run/bridge.sock is the protocol default. Writable /run is scoped to this

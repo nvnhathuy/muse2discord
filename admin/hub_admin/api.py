@@ -21,6 +21,7 @@ import json
 import os
 import time
 from http import HTTPStatus
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Optional
 from urllib.parse import parse_qs, urlparse
@@ -77,7 +78,11 @@ class AdminApp:
             "ready": True, "recovering": False, "journal_healthy": True,
             "online_bots": [], "expected_bots": [],
         })
-        self.static_dir = static_dir or os.path.join(os.path.dirname(__file__), "static")
+        # Resolve the static dir from THIS package's file location,
+        # absolutised: a bare dirname(__file__) can stay relative to the
+        # process CWD, which breaks the page in layouts where the CWD is
+        # not the package parent (integrated image, CWD=/app).
+        self.static_dir = static_dir or str(Path(__file__).resolve().parent / "static")
         # AdminCredentials or None (None in legacy token-only setups:
         # password endpoints then answer 501).
         self.credentials = credentials
@@ -137,6 +142,7 @@ class AdminApp:
                 "kind": identity.kind,
                 "name": identity.name,
                 "scope": identity.grant.scope if identity.grant else None,
+                "totp_enabled": bool(self.credentials and self.credentials.totp_secret()),
             },
         }
 
@@ -325,6 +331,30 @@ class AdminApp:
         self.audit.record("admin", "create_recovery_code", "", {})
         return 201, {"recovery_code": code}  # shown exactly once
 
+    def enroll_totp(self, identity: Identity, body: dict):
+        """Enroll a TOTP secret for step-up auth (admin session +
+        current password). Returns the secret + otpauth URI so the
+        admin can add it to an authenticator app; from then on,
+        sensitive ops require the current 6-digit code."""
+        self._require_admin_session(identity)
+        credentials = self._require_credentials()
+        if not credentials.verify(body.get("current_password", "")):
+            raise PermissionError("current password is wrong")
+        from .totp import generate_secret, otpauth_uri
+        secret = generate_secret()
+        credentials.set_totp_secret(secret)
+        self.audit.record("admin", "enroll_totp", "", {})
+        return 201, {"totp_secret": secret, "otpauth_uri": otpauth_uri(secret)}
+
+    def disable_totp(self, identity: Identity, body: dict):
+        self._require_admin_session(identity)
+        credentials = self._require_credentials()
+        if not credentials.verify(body.get("current_password", "")):
+            raise PermissionError("current password is wrong")
+        credentials.clear_totp()
+        self.audit.record("admin", "disable_totp", "", {})
+        return 200, {"ok": True}
+
     def recover_password(self, body: dict):
         """Forgot-password path from the login screen: recovery code +
         new password. Public endpoint - the code IS the credential.
@@ -367,7 +397,7 @@ def make_handler(app: AdminApp):
             self.wfile.write(body)
 
         def _send_page(self):
-            page = os.path.join(app.static_dir, "admin.html")
+            page = Path(app.static_dir) / "admin.html"
             try:
                 with open(page, "rb") as fh:
                     body = fh.read()
@@ -480,6 +510,10 @@ def make_handler(app: AdminApp):
                 return app.change_password(identity, body)
             if parts == ["api", "recovery-code"] and method == "POST":
                 return app.create_recovery_code(identity)
+            if parts == ["api", "totp", "enroll"] and method == "POST":
+                return app.enroll_totp(identity, body)
+            if parts == ["api", "totp", "disable"] and method == "POST":
+                return app.disable_totp(identity, body)
             return 404, {"error": f"no route for {method} {path}"}
 
         do_GET = lambda self: self._dispatch("GET")

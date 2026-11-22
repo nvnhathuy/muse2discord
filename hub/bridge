@@ -13,7 +13,11 @@ def main():
     sub = p.add_subparsers(dest="command", required=True)
     for command in ("wait", "say", "ack", "working"):
         s = sub.add_parser(command)
-        s.add_argument("--agent", choices=("lead", "worker", "deputy"), default=os.getenv("BRIDGE_AGENT"))
+        # No choices= whitelist here: agent keys come from the hub's
+        # effective config/registry (e.g. ga/lu/chim/meo), which only the
+        # hub can know. The hub validates the key server-side (Hub._agent)
+        # and returns a JSON bad_request error for unknown agents.
+        s.add_argument("--agent", default=os.getenv("BRIDGE_AGENT"))
         if command == "wait":
             s.add_argument("--timeout", type=float, default=540)
         elif command == "say":

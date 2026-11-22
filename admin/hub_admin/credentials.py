@@ -1,9 +1,16 @@
 """Admin password credentials: strong hashing, recovery code, version.
 
-Storage is a single JSON file (mode 0600) holding ONLY hashes:
-- password: PBKDF2-HMAC-SHA256, per-credential random salt, 600k rounds.
-- recovery code: same treatment; a code is shown to the admin exactly
-  once, is single-use, and generating a new one invalidates the old.
+Storage is a single JSON file (mode 0600) holding:
+- password: PBKDF2-HMAC-SHA256 hash, per-credential random salt, 600k
+  rounds - never the plaintext password.
+- recovery code: same hashed treatment; a code is shown to the admin
+  exactly once, is single-use, and generating a new one invalidates
+  the old.
+- the TOTP step-up secret, once enrolled: stored in PLAINTEXT by
+  necessity - the server must recompute the current code from the
+  shared secret to verify it, so it cannot be one-way hashed like the
+  password. The file's 0600 permissions are its protection (the same
+  arrangement as the bot-token secret store).
 - version: bumped on EVERY password set (change, recovery reset, CLI
   reset, initial seed). Sessions stamp the version at login, so a
   version bump kills every pre-existing session on its next check -
@@ -75,6 +82,8 @@ class AdminCredentials:
                 "version": (int(self._data["version"]) + 1) if self._data else 1,
                 "updated_at": time.time(),
                 "recovery": self._data.get("recovery") if self._data else None,
+                "totp_secret": self._data.get("totp_secret") if self._data else None,
+                "totp_enrolled_at": self._data.get("totp_enrolled_at") if self._data else None,
             }
             self._save()
 
@@ -110,6 +119,31 @@ class AdminCredentials:
         self._load()
         recovery = (self._data or {}).get("recovery")
         return bool(recovery and recovery.get("used_at") is None)
+
+    # ------------------------------------------------------------------
+    # TOTP step-up secret (integrated mode): stored in the same 0600
+    # credentials file; enrollment happens in the admin page.
+    # ------------------------------------------------------------------
+    def set_totp_secret(self, secret_b32: str) -> None:
+        with self._lock:
+            self._load()
+            if not self._data:
+                raise ValueError("no admin password set yet")
+            self._data["totp_secret"] = secret_b32
+            self._data["totp_enrolled_at"] = time.time()
+            self._save()
+
+    def totp_secret(self) -> Optional[str]:
+        self._load()
+        return (self._data or {}).get("totp_secret")
+
+    def clear_totp(self) -> None:
+        with self._lock:
+            self._load()
+            if self._data:
+                self._data.pop("totp_secret", None)
+                self._data.pop("totp_enrolled_at", None)
+                self._save()
 
     def consume_recovery_code(self, presented: str) -> bool:
         """Check a recovery code and burn it on success (single-use)."""

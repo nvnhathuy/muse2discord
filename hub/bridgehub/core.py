@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from .config import AGENTS
+from .config import Agent
 from .reliability import Reliability
 
 log = logging.getLogger(__name__)
@@ -54,9 +54,12 @@ class Message:
 
 
 class Filter:
-    def __init__(self, config):
+    def __init__(self, config, gate=None):
         self.config = config
-        self.counts = dict.fromkeys(AGENTS, 0)
+        # Optional RoutingGate (hub_integration): when present, an agent
+        # paused at hub level is excluded from routing on the next message.
+        self.gate = gate
+        self.counts = dict.fromkeys(config.agents, 0)
         self.patterns = {
             key: re.compile(r'"(?:' + "|".join(re.escape(unicodedata.normalize("NFC", t))
                                              for t in a.call_tokens) + r')(?!\w)', re.I)
@@ -74,12 +77,14 @@ class Filter:
             return []
         owner = message.author_id == self.config.owner_id
         if owner:
-            self.counts = dict.fromkeys(AGENTS, 0)
+            self.counts = dict.fromkeys(self.config.agents, 0)
         text = unicodedata.normalize("NFC", message.content)
         broadcast = "tất cả" in text.casefold()
         targets = []
         for key, a in self.config.agents.items():
             if not (broadcast or a.bot_id in message.mentions or self.patterns[key].search(text)):
+                continue
+            if self.gate is not None and not self.gate.is_enabled(key):
                 continue
             if not owner and self.counts[key] >= 8:
                 log.info("peer circuit dropped message=%s agent=%s", message.id, key)
@@ -153,11 +158,19 @@ class Journal:
 class Hub(Reliability):
     def __init__(self, config, transport, *, typing_interval=8.0, typing_grace=180.0, clock=None, sweeper_interval=10.0):
         self.config, self.transport = config, transport
+        # Agent keys come from the config (env defaults or, in integrated
+        # mode, the shared registry); the watcher keeps this tuple current.
+        self.agent_keys = tuple(config.agents)
+        # Integration seams (PATCH-POINTS section 2); all None in legacy mode.
+        self.routing_gate = None
+        self.registry_watcher = None
+        self.bot_lifecycle = None
+        self._loop = None  # captured by __main__ for the admin-thread ops
         self.journal = Journal(config.journal_path)
         self.sources = {}
         self.history_retired = set()
         self.history_context = set()
-        self.acked = dict.fromkeys(AGENTS, 0)
+        self.acked = dict.fromkeys(self.agent_keys, 0)
         self.replies = {}
         self._init_reliability(clock, sweeper_interval)
         journal_was_empty = not self.journal.records
@@ -182,31 +195,39 @@ class Hub(Reliability):
             elif rec["type"] == "history_retire":
                 self.history_retired.add((rec["agent"], snowflake(rec["id"])))
             elif rec["type"] == "ack":
+                # setdefault: a journal may name an agent the registry has
+                # since removed; replay must not crash on it at boot.
+                self.acked.setdefault(rec["agent"], 0)
                 if rec.get("exact"):
-                    self.completed[rec["agent"]].add(snowflake(rec["id"]))
+                    self.completed.setdefault(rec["agent"], set()).add(snowflake(rec["id"]))
+                elif rec.get("reset"):
+                    # Admin cursor reset (PATCH-POINTS section 2): ASSIGN,
+                    # never max() - the cursor may legitimately move back.
+                    self.acked[rec["agent"]] = int(rec["id"])
                 else:
                     self.acked[rec["agent"]] = max(self.acked[rec["agent"]], int(snowflake(rec["id"])))
             elif rec["type"] == "reply":
                 key = (rec["agent"], snowflake(rec["reply_to"]))
                 self.replies[key] = rec["state"]
+                self.acked.setdefault(key[0], 0)
                 if rec.get("exact"):
-                    self.completed[key[0]].add(key[1])
+                    self.completed.setdefault(key[0], set()).add(key[1])
                 else:
                     self.acked[key[0]] = max(self.acked[key[0]], int(key[1]))
             else:
                 self._restore_reliability(rec)
-        for agent in AGENTS:
+        for agent in self.agent_keys:
             self.suspects[agent].difference_update(self.completed[agent])
             self.suspects[agent] = {mid for mid in self.suspects[agent] if int(mid) > self.acked[agent]}
         self.journal.records.clear()
-        self.events = {a: asyncio.Event() for a in AGENTS}
-        self.waiters = dict.fromkeys(AGENTS, 0)
+        self.events = {a: asyncio.Event() for a in self.agent_keys}
+        self.waiters = dict.fromkeys(self.agent_keys, 0)
         self.typing_interval, self.typing_grace = typing_interval, typing_grace
         self.typing = {}
         self.typing_since = {}
         self.typing_stopped = set()
         self.background = set()
-        self.say_locks = {a: asyncio.Lock() for a in AGENTS}
+        self.say_locks = {a: asyncio.Lock() for a in self.agent_keys}
         self.recovery_lock = asyncio.Lock()
         self.ready = asyncio.Event()
         self.recovering = True
@@ -261,7 +282,7 @@ class Hub(Reliability):
         # Self-heal old journals produced by releases that queued all fetched
         # history. Preserve anything that has ever reached a delivery record.
         stale = []
-        for agent in AGENTS:
+        for agent in self.agent_keys:
             for mid in self.queues[agent]:
                 message = self.sources[mid]
                 timestamp = self._message_epoch(message)
@@ -273,8 +294,8 @@ class Hub(Reliability):
 
     def _rebuild(self):
         self.max_seen = max(map(int, self.sources), default=0)
-        self.filter = Filter(self.config)
-        self.queues = {a: {} for a in AGENTS}
+        self.filter = Filter(self.config, self.routing_gate)
+        self.queues = {a: {} for a in self.agent_keys}
         self.targets = {}
         for msg in sorted(self.sources.values(), key=lambda m: int(m.id)):
             targets = self.filter.route(msg)
@@ -285,9 +306,9 @@ class Hub(Reliability):
                         and msg.id not in self.suspects[a] and (a, msg.id) not in self.history_retired
                         and (msg.id not in self.history_context or delivered)):
                     self.queues[a][msg.id] = msg
-        for a in AGENTS:
+        for a in self.agent_keys:
             self._low_water(a)
-        for a in AGENTS:
+        for a in self.agent_keys:
             self._signal(a)
 
     def _signal(self, agent):
@@ -297,8 +318,8 @@ class Hub(Reliability):
             self.events[agent].clear()
 
     def _agent(self, agent):
-        if agent not in AGENTS:
-            raise BridgeError("agent must be lead, worker, or deputy")
+        if agent not in self.config.agents:
+            raise BridgeError("agent must be one of: " + ", ".join(self.config.agents))
 
     def spawn(self, coro):
         task = asyncio.create_task(coro)
@@ -356,7 +377,7 @@ class Hub(Reliability):
         # Gateway callbacks from three clients can arrive out of order. Rebuild in
         # snowflake order rather than allowing duplicate callbacks to reset counters.
         in_order = int(message.id) > self.max_seen
-        before = {a: set(self.queues[a]) for a in AGENTS} if not in_order else None
+        before = {a: set(self.queues[a]) for a in self.agent_keys} if not in_order else None
         self.journal.append({"type": "message", "message": message.public()})
         self.sources[message.id] = message
         if in_order:
@@ -369,7 +390,7 @@ class Hub(Reliability):
                     self._enqueued(a, message)
         else:
             self._rebuild()
-            for a in AGENTS:
+            for a in self.agent_keys:
                 for mid in set(self.queues[a]) - before[a]:
                     self._enqueued(a, self.queues[a][mid])
         return self.targets[message.id]
@@ -388,7 +409,7 @@ class Hub(Reliability):
                 async for msg in fetch_history(agent, self.acked[agent]):
                     if not self.is_hub_message(msg) and self.filter.authorized(msg):
                         fetched[msg.id] = msg
-            await asyncio.gather(*(fetch(a) for a in AGENTS))
+            await asyncio.gather(*(fetch(a) for a in self.agent_keys))
             fetched.update(self.buffer)
             live_ids = set(self.buffer)
             new_ids = set(fetched) - self.sources.keys()
@@ -432,7 +453,7 @@ class Hub(Reliability):
             self.previous_hub_start = self.current_hub_start
             self.recovering = False
             self.ready.set()
-            for a in AGENTS:
+            for a in self.agent_keys:
                 for mid, msg in self.queues[a].items():
                     self._enqueued(a, msg, react=mid in new_ids)
             self.initial_recovery = False
@@ -499,15 +520,142 @@ class Hub(Reliability):
         self._signal(agent)
 
     async def ack(self, agent, mid):
+        return await self._ack(agent, mid)
+
+    async def _ack(self, agent, mid, *, by=None):
+        """Shared ack body; `by="admin"` marks an ack done on the agent's
+        behalf from the admin page (PATCH-POINTS section 2)."""
         await self.ready.wait()
         mid = self._check_target(agent, mid)
         async with self.say_locks[agent]:
             if int(mid) > self.acked[agent] and mid not in self.completed[agent]:
-                self.journal.append({"type": "ack", "agent": agent, "id": mid, "exact": True})
+                record = {"type": "ack", "agent": agent, "id": mid, "exact": True}
+                if by:
+                    record["by"] = by
+                self.journal.append(record)
                 self._advance(agent, mid)
                 self._completion_metric(agent, mid, "ack2")
                 await self._recover_warning(agent)
         return {"ok": True, "last_acked_id": str(self.acked[agent])}
+
+    # ------------------------------------------------------------------
+    # Admin ops (PATCH-POINTS section 2): synchronous facades called from
+    # the admin page's thread; the work itself runs on the hub loop.
+    # ------------------------------------------------------------------
+    def _run_on_loop(self, coro):
+        loop = self._loop
+        if loop is None or not loop.is_running():
+            raise RuntimeError("hub event loop is not available for admin ops")
+        try:
+            on_loop_thread = asyncio.get_running_loop() is loop
+        except RuntimeError:
+            on_loop_thread = False
+        if on_loop_thread:
+            # Blocking here would deadlock the hub loop; the admin page
+            # always calls these ops from its own HTTP thread.
+            raise RuntimeError("admin ops must be called from a non-loop thread")
+        return asyncio.run_coroutine_threadsafe(coro, loop).result(timeout=30)
+
+    def admin_ack_on_behalf(self, agent, mid):
+        result = self._run_on_loop(self._ack(agent, mid, by="admin"))
+        return bool(result and result.get("ok"))
+
+    def admin_reset_cursor(self, agent, to_id="0"):
+        return self._run_on_loop(self._reset_cursor(agent, to_id))
+
+    async def _reset_cursor(self, agent, to_id):
+        self._agent(agent)
+        text = str(to_id)
+        cursor = 0 if text == "0" else int(snowflake(text))
+        async with self.say_locks[agent]:
+            self.acked[agent] = cursor
+            self.journal.append({"type": "ack", "agent": agent, "id": str(cursor), "reset": True})
+            for mid in [m for m in self.queues[agent] if int(m) <= cursor]:
+                self.queues[agent].pop(mid, None)
+                self.queued_at.pop((agent, mid), None)
+                self.typing_stopped.add((agent, mid))
+            self._low_water(agent)
+            self._signal(agent)
+        return str(self.acked[agent])
+
+    # ------------------------------------------------------------------
+    # Shared-registry hot reload (PATCH-POINTS section 2): a background
+    # poll applies registry events without restarting the hub.
+    # ------------------------------------------------------------------
+    async def watch_registry(self, poll_interval=2.0):
+        while not self.closed:
+            await asyncio.sleep(poll_interval)
+            try:
+                events = self.registry_watcher.poll()
+                if events:
+                    await self._apply_registry_events(events)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.error("registry watch failed (%s); will retry", type(exc).__name__)
+
+    async def _apply_registry_events(self, events):
+        agents = self.registry_watcher.agents
+        # (a) routing gate first: a pause bites on the very next message
+        if self.routing_gate is not None:
+            self.routing_gate.refresh(agents)
+        # (b) config.agents follows the registry snapshot (mutated in
+        # place: the runtime and the filter share this Config object)
+        old_counts = dict(self.filter.counts)
+        for key in list(self.config.agents):
+            if key not in agents:
+                del self.config.agents[key]
+                self.config.receive_deadlines.pop(key, None)
+        for key, profile in agents.items():
+            old = self.config.agents.get(key)
+            token = profile.token or (old.token if old is not None else "")
+            self.config.agents[key] = Agent(key, profile.bot_id, token,
+                                             profile.display_name, tuple(profile.call_tokens))
+            if profile.receive_deadline is not None:
+                self.config.receive_deadlines[key] = float(profile.receive_deadline)
+            elif key not in self.config.receive_deadlines:
+                self.config.receive_deadlines[key] = 180.
+        self.agent_keys = tuple(self.config.agents)
+        # (c) bot lifecycle through the runtime adapter
+        if self.bot_lifecycle is not None:
+            await self.bot_lifecycle.apply(events, agents)
+        # (d) per-agent state for added / removed agents
+        for event in events:
+            if event.kind == "added":
+                self._init_agent_state(event.key)
+            elif event.kind == "removed":
+                self._drop_agent_state(event.key)
+        self.filter = Filter(self.config, self.routing_gate)
+        for key, count in old_counts.items():
+            if key in self.filter.counts:
+                self.filter.counts[key] = count
+        for key in self.agent_keys:
+            if key in self.queues:
+                self._signal(key)
+
+    def _init_agent_state(self, key):
+        self.acked.setdefault(key, 0)
+        self.completed.setdefault(key, set())
+        self.suspects.setdefault(key, set())
+        self.last_wait_at.setdefault(key)
+        self.last_progress_at.setdefault(key)
+        self.receive_samples.setdefault(key, [])
+        self.queues.setdefault(key, {})
+        self.events.setdefault(key, asyncio.Event())
+        self.waiters.setdefault(key, 0)
+        self.say_locks.setdefault(key, asyncio.Lock())
+
+    def _drop_agent_state(self, key):
+        for store in (self.acked, self.completed, self.suspects, self.last_wait_at,
+                      self.last_progress_at, self.receive_samples, self.queues,
+                      self.events, self.waiters, self.say_locks):
+            store.pop(key, None)
+        for store in (self.delivery, self.queued_at):
+            for compound in [k for k in store if k[0] == key]:
+                del store[compound]
+        self.typing_stopped = {k for k in self.typing_stopped if k[0] != key}
+        self.typing.pop(key, None)
+        self.typing_since = {k: v for k, v in self.typing_since.items() if k[0] != key}
 
     async def say(self, agent, reply_to, content, part=None, final=False):
         await self.ready.wait()
