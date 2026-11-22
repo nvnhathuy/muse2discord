@@ -95,6 +95,19 @@ class ApiTests(unittest.TestCase):
         status, _ = anon.call("POST", "/api/login", {"token": "wrong"})
         self.assertEqual(status, 401)
 
+    def test_logout_kills_session(self):
+        status, _ = self.client.call("GET", "/api/agents")
+        self.assertEqual(status, 200)
+        status, _ = self.client.call("POST", "/api/logout")
+        self.assertEqual(status, 200)
+        status, _ = self.client.call("GET", "/api/agents")
+        self.assertEqual(status, 401)
+        # a fresh login still works after logout
+        status, _ = self.client.call("POST", "/api/login", {"token": ADMIN_TOKEN})
+        self.assertEqual(status, 200)
+        status, _ = self.client.call("GET", "/api/agents")
+        self.assertEqual(status, 200)
+
     def test_agent_lifecycle_and_secrets_hidden(self):
         status, data = self.client.call("POST", "/api/agents", {
             "key": "alpha", "display_name": "Alpha",

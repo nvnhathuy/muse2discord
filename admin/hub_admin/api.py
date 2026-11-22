@@ -402,6 +402,12 @@ def make_handler(app: AdminApp):
                         return self._send_json(401, {"error": "invalid admin password"})
                     return self._send_json(200, {"ok": True}, {
                         "Set-Cookie": f"admin_session={session}; HttpOnly; Path=/; SameSite=Strict"})
+                if path == "/api/logout" and method == "POST":
+                    identity = app.identify(self.headers)
+                    if identity is not None and identity.session_id:
+                        app.auth.logout(identity.session_id)
+                    return self._send_json(200, {"ok": True}, {
+                        "Set-Cookie": "admin_session=; HttpOnly; Path=/; SameSite=Strict; Max-Age=0"})
                 if path == "/api/recover" and method == "POST":
                     try:
                         status, payload = app.recover_password(self._body())

@@ -43,6 +43,7 @@
 </section>
 
 <main id="app" class="hidden">
+  <p><button id="logout-btn">Đăng xuất</button></p>
   <section class="card">
     <h2>Tổng quan</h2>
     <div id="hub-status" class="muted">Đang tải…</div>
@@ -168,6 +169,13 @@ $("login-btn").onclick = async () => {
     $("login-box").classList.add("hidden"); $("app").classList.remove("hidden");
     note("Đã đăng nhập quản trị."); refreshAll();
   } catch (e) { note(e.message, true); }
+};
+$("logout-btn").onclick = async () => {
+  try { await api("POST", "/api/logout"); } catch (e) { /* session may already be gone */ }
+  grantToken = null; grantScope = null;
+  $("app").classList.add("hidden"); $("login-box").classList.remove("hidden");
+  $("login-token").value = "";
+  note("Đã đăng xuất.");
 };
 $("recover-btn").onclick = async () => {
   try {

@@ -1,6 +1,6 @@
 # Ghi chú bàn giao — trang quản trị hub
 
-Người dựng: deputy, 2026-11-22. Luồng đã chốt: Chim dựng + tự chạy test
+Người dựng: deputy, 2026-11-22. Luồng đã chốt: deputy dựng + tự chạy test
 local đạt xanh → thả kết quả vào thư mục này → lead kiểm chứng độc lập
 (chạy test, render thật + bấm thử, quét thông tin cá nhân) → báo chủ dự án
 → lead đẩy lên GitHub repo muse2discord dạng nhánh + PR (không tự merge,
