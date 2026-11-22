@@ -56,8 +56,9 @@ LOOP_TEMPLATE = """START=$(date +%s); FAILS=0
 while :; do
   NOW=$(date +%s)
   if [ $((NOW - START)) -gt 7200 ]; then echo "SENTINEL_MAX_LIFE"; exit 0; fi
-  OUT=$(python3 ~/portainer_bridge.py wait --agent __AGENT__ --timeout 30 2>/dev/null)
+  OUT=$(timeout 75 python3 ~/portainer_bridge.py wait --agent __AGENT__ --timeout 30 2>/dev/null)
   RC=$?
+  if [ $RC -eq 124 ]; then echo "$(date -Is) wait cycle cut at 75s (no answer from hub)" >> ~/sentinel-cuts.log; fi
   if [ $RC -ne 0 ] || [ -z "$OUT" ]; then
     FAILS=$((FAILS + 1))
     if [ $FAILS -eq 1 ]; then sleep 15; elif [ $FAILS -eq 2 ]; then sleep 30; else sleep 60; fi

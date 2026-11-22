@@ -284,6 +284,11 @@
 # (15s -> 30s -> 60s, capped); the first successful wait resets the backoff.
 # The only planned exit is SENTINEL_MAX_LIFE (2h), so the agent opens a
 # fresh round; message delivery ends the round the same way, with the JSON.
+# Every single wait call is also wrapped in a 75-second wall-clock cap
+# (timeout 75): a hub restart in the middle of a wait can hang the call
+# itself far past its own 30s timeout (incident 2026-11-22: one cycle
+# stretched ~6 minutes). A cut wait (exit 124) is logged with its
+# timestamp to ~/sentinel-cuts.log and treated as a failed wait.
 set -u
 DIR="$HOME/workspace/discord-bridge-agent"
 KEY="$HOME/.ssh/agent_discord_bridge"
@@ -294,8 +299,9 @@ START=$(date +%s); FAILS=0
 while :; do
   NOW=$(date +%s)
   if [ $((NOW - START)) -gt 7200 ]; then echo "SENTINEL_MAX_LIFE"; exit 0; fi
-  OUT=$(python3 ~/portainer_bridge.py wait --agent deputy --timeout 30 2>/dev/null)
+  OUT=$(timeout 75 python3 ~/portainer_bridge.py wait --agent deputy --timeout 30 2>/dev/null)
   RC=$?
+  if [ $RC -eq 124 ]; then echo "$(date -Is) wait cycle cut at 75s (no answer from hub)" >> ~/sentinel-cuts.log; fi
   if [ $RC -ne 0 ] || [ -z "$OUT" ]; then
     FAILS=$((FAILS + 1))
     if [ $FAILS -eq 1 ]; then sleep 15; elif [ $FAILS -eq 2 ]; then sleep 30; else sleep 60; fi
