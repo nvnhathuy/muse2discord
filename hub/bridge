@@ -5,13 +5,39 @@ import json
 import os
 import socket
 import sys
+import time
+
+
+def laws_text() -> str:
+    """Render the room hard laws ("luật cứng") for an agent to read.
+
+    The admin page owns laws.json in the registry dir; this command is
+    the agents' read path after the room is told "vào đọc và update
+    luật". No socket round-trip and no key check: the file IS the
+    shared state (exactly like agents.json next to it), any agent may
+    read it. A missing file means version 0 with no rules yet."""
+    registry_dir = os.getenv("BRIDGE_REGISTRY_DIR", "").strip()
+    data = {}
+    if registry_dir:
+        path = os.path.join(registry_dir, "laws.json")
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+    version = int(data.get("version", 0))
+    updated = data.get("updated_at")
+    when = (time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(updated))
+            if updated else "chưa có")
+    lines = [f"Luật cứng — phiên bản {version}, cập nhật {when}"]
+    for index, rule in enumerate(data.get("rules", []), 1):
+        lines.append(f"{index}. {rule.get('text', '')}")
+    return "\n".join(lines)
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--socket", default=os.getenv("BRIDGE_SOCKET", "/run/bridge.sock"))
     sub = p.add_subparsers(dest="command", required=True)
-    for command in ("wait", "say", "ack", "working"):
+    for command in ("wait", "say", "ack", "working", "laws"):
         s = sub.add_parser(command)
         # No choices= whitelist here: agent keys come from the hub's
         # effective config/registry (e.g. ga/lu/chim/meo), which only the
@@ -27,10 +53,21 @@ def main():
         elif command == "working":
             s.add_argument("id", nargs="?")
             s.add_argument("--eta", type=float)
-        else:
+        elif command == "ack":
             s.add_argument("id")
+        # "laws" takes no further arguments: it renders laws.json from
+        # the registry dir (see laws_text) and never opens the socket.
     args = vars(p.parse_args())
     path = args.pop("socket")
+    if args["command"] == "laws":
+        # Local file read (see laws_text): never touches the socket,
+        # and any agent key - or none - may read the room's laws.
+        try:
+            print(laws_text())
+        except (OSError, ValueError) as exc:
+            print(json.dumps({"error": {"code": "laws_unavailable", "message": str(exc)}}))
+            return 1
+        return 0
     if not args["agent"]:
         p.error("use --agent or set BRIDGE_AGENT")
     if args["command"] == "say":

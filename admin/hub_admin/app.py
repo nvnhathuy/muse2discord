@@ -31,6 +31,7 @@ from .credentials import DEFAULT_PASSWORD, AdminCredentials
 from .delivery import DeliveryState
 from .grants import GrantStore
 from .keydrop import KeydropClient
+from .laws import LawsStore
 from .ops_config import OpsConfig
 from .registry import AgentRegistry
 from .secrets_store import SecretStore
@@ -103,6 +104,7 @@ def build_app(state_dir: str, *, delivery=None, status_provider=None) -> AdminAp
         ),
         auth=auth,
         credentials=credentials,
+        laws=LawsStore(os.path.join(state_dir, "laws.json")),
         keydrop=KeydropClient(
             state_dir,
             target=os.environ.get("HUB_KEYDROP_TARGET", ""),

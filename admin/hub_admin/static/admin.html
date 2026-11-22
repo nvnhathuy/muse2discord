@@ -80,6 +80,23 @@
     <button id="add-agent-btn">+ Thêm agent</button>
   </section>
 
+  <section class="card" id="laws-card">
+    <h2>Luật cứng</h2>
+    <div id="laws-meta" class="muted">…</div>
+    <ol id="laws-list"></ol>
+    <div id="laws-empty" class="muted hidden">Chưa có luật nào.</div>
+    <p>
+      <button id="laws-prompt-btn" type="button">Prompt thông báo luật</button>
+    </p>
+    <p class="muted">Câu thông báo mẫu để dán vào phòng sau khi sửa luật — bấm nút, chép câu có sẵn rồi đăng vào phòng; agent nghe thông báo sẽ tự chạy bridge laws đọc bản mới nhất và ghi vào bộ nhớ dài hạn của chúng.</p>
+    <div id="laws-write">
+      <label>Nội dung luật mới <textarea id="law-text" rows="2" style="width:100%"></textarea></label>
+      <p class="muted">Luật lưu trên server của hub và áp dụng cho mọi agent trong phòng. Thêm/sửa/xoá ở đây xong, hãy thông báo trong phòng “vào đọc và update luật” — agent tự đọc bản mới nhất bằng lệnh bridge laws và ghi vào bộ nhớ của chúng.</p>
+      <button id="law-add-btn" type="button">Thêm luật</button>
+    </div>
+    <p class="muted hidden" id="laws-readonly-note">Quyền tạm hiện tại chỉ xem — chỉ admin hoặc quyền tạm mức full mới thêm/sửa/xoá được luật.</p>
+  </section>
+
   <section class="card">
     <h2>Hàng chờ của agent</h2>
     <label>Chọn agent <select id="queue-agent"></select></label>
@@ -151,6 +168,7 @@
             <li>Bấm nút “SSH key” ở dòng của agent, dán public key vào — trang tự thêm key lên VM điều phối và hiện fingerprint + thời gian đã thêm ngay trong hộp thoại.</li>
             <li>Agent mới mặc định ở trạng thái Tạm dừng: bấm “Mở lại” thì agent mới bắt đầu nhận tin. Điểm danh thử trong phòng để xác nhận agent trả lời được.</li>
           </ol></li>
+        <li><strong>Luật cứng:</strong> mục Luật cứng trong trang này là nơi lưu luật phòng chính thức — luật sống trên server của hub, có số phiên bản tăng thêm 1 mỗi lần thêm/sửa/xoá. Admin hoặc agent giữ quyền tạm mức full thì thêm/sửa/xoá được; quyền tạm mức khác chỉ xem. Thêm luật xong, chỉ cần thông báo trong phòng “vào đọc và update luật” — agent tự chạy lệnh <code>bridge laws</code> để đọc bản mới nhất từ server và ghi vào bộ nhớ của chúng. Nút “Prompt thông báo luật” trong mục Luật cứng có sẵn đúng câu thông báo mẫu để chép dán vào phòng.</li>
         <li><strong>Tạm dừng 2 mức:</strong> mức hub (nút Tạm dừng trong trang) chặn định tuyến ngay lập tức, bot vẫn online trong phòng; mức agent do phía agent tự dừng, hub không can thiệp.</li>
         <li><strong>Quyền tạm:</strong> chỉ admin mới được cấp và thu hồi. Grant mức full có toàn quyền như admin, TRỪ quyền cấp grant. Token chỉ hiện đúng 1 lần lúc cấp — hãy đưa ngay cho agent. Thu hồi có hiệu lực ngay lập tức.</li>
         <li><strong>Mật khẩu admin:</strong> bản cài mới đăng nhập lần đầu bằng tên <code>admin</code> và mật khẩu mặc định <code>admin123</code> (hoặc mật khẩu ban đầu do bản cài đặt sẵn, nếu có) — trang sẽ BẮT BUỘC đổi mật khẩu ngay ở lần đăng nhập đầu, chưa đổi xong thì chưa vào được trang chính; đổi xong trang hiện mã khôi phục một lần để cất. Sau đó đổi mật khẩu bất cứ lúc nào trong mục Tài khoản quản trị. Quên mật khẩu thì dùng mã khôi phục ở màn đăng nhập — dùng xong, trang cấp một mã MỚI để cất tiếp. Mất cả mã khôi phục thì đặt lại qua SSH theo file HUONG-DAN-RESET-MAT-KHAU.md trong gói.</li>
@@ -207,6 +225,28 @@
     <button id="ssh-key-close-btn" type="button">Đóng</button>
   </p>
   <p id="ssh-key-status" class="muted"></p>
+</dialog>
+
+<dialog id="law-edit-dialog">
+  <h2>Sửa luật cứng</h2>
+  <label>Nội dung luật <textarea id="law-edit-text" rows="3" style="width:100%"></textarea></label>
+  <p class="muted">Sửa xong, phiên bản luật tăng lên một — agent đọc lại bằng bridge laws sẽ thấy bản mới.</p>
+  <p>
+    <button id="law-edit-save-btn" type="button">Lưu</button>
+    <button id="law-edit-close-btn" type="button">Đóng</button>
+  </p>
+  <p id="law-edit-status" class="muted"></p>
+</dialog>
+
+<dialog id="laws-prompt-box">
+  <h2>Prompt thông báo luật</h2>
+  <p class="muted">Chép câu thông báo này dán vào phòng — agent trong phòng nghe thông báo sẽ tự vào đọc luật cứng mới nhất trên server (lệnh bridge laws) và ghi vào bộ nhớ dài hạn của chúng. Có thể sửa câu chữ trước khi chép.</p>
+  <textarea id="laws-prompt-text" rows="3" style="width:100%"></textarea>
+  <p>
+    <button id="laws-prompt-copy-btn" type="button">Chép prompt</button>
+    <button id="laws-prompt-close-btn" type="button">Đóng</button>
+    <span id="laws-prompt-copy-status" class="muted"></span>
+  </p>
 </dialog>
 
 <script type="text/plain" id="sentinel-template">
@@ -502,12 +542,15 @@ Các giá trị phụ thuộc máy của bạn — điền theo máy của bạn
 - KEY: đường dẫn khoá SSH riêng của máy bạn (xem bước khoá SSH ở mục Việc đầu tiên).
 - DIR: thư mục trên máy bạn chứa bộ dụng cụ này (lính canh và connect_via_proxy.py đặt cạnh nhau; portainer_bridge.py chạy trên VM — máy bạn chưa có cả gói thì báo chủ phòng cấp gói mẫu chuẩn).
 
-Luật phòng (bắt buộc):
-1. Chỉ lên tiếng khi được gọi đúng luật: dấu " ngay trước tên bạn, @mention bạn, hoặc "tất cả". Không được gọi thì im lặng.
-2. Mọi câu trả lời mở đầu bằng <phản hồi trong Xs> với X là số giây ĐO THẬT từ lúc tin tới; cấm bịa số liệu dưới mọi hình thức.
-3. Trước khi xử lý một tin, tự kiểm tra mình đã làm việc đó chưa; đã làm rồi thì chỉ ack lặng, không đăng lại bài trùng.
-4. Chậm quá 60 giây: nếu do hub thì mention giám đốc phòng kèm lý do; nếu do phía bạn thì mention giám đốc phòng kèm lý do + phương án sửa, chờ duyệt mới sửa.
-5. Agent mới đang ở trạng thái Tạm dừng phía hub cho tới khi chủ phòng Mở lại — nếu wait không thấy tin, đừng tự kết luận hub hỏng.
+Cơ chế luật cứng (đọc kỹ — luật sống trên server):
+1. Luật cứng đầy đủ của phòng được lưu trên server của hub — KHÔNG nằm trong prompt này; bản trên server mới là bản hiện hành. Prompt này chỉ phổ biến luật gọi tên ở mục dưới đây và cơ chế cập nhật luật này.
+2. Ngay khi kết nối xong, chạy ngay lệnh: bridge laws --agent ${a.key} — để lấy toàn bộ luật hiện hành từ server và ghi vào bộ nhớ dài hạn của bạn, kèm số phiên bản ở dòng đầu kết quả.
+3. Từ đó về sau, mỗi khi nghe trong phòng câu thông báo "tất cả agent vào đọc, cập nhật luật cứng và ghi vào bộ nhớ dài hạn" thì chạy lại bridge laws --agent ${a.key} và cập nhật bộ nhớ theo bản mới nhất trên server.
+
+Luật gọi tên (bắt buộc):
+Chỉ lên tiếng khi được gọi đúng cách: dấu " ngay trước tên bạn, @mention bạn, hoặc "tất cả". Không được gọi thì im lặng.
+
+Lưu ý: agent mới đang ở trạng thái Tạm dừng phía hub cho tới khi chủ phòng Mở lại — nếu wait không thấy tin, đừng tự kết luận hub hỏng.
 
 Việc đầu tiên của bạn (theo đúng thứ tự):
 1. Nếu máy bạn chưa có khoá SSH riêng, tạo một cặp khoá ed25519 cho riêng việc nối hub.
@@ -567,6 +610,91 @@ $("ssh-key-save-btn").onclick = async () => {
     }
   } catch (e) { $("ssh-key-status").textContent = "Lỗi: " + e.message; }
 };
+
+// ---------------------------------------------------------------- laws
+function lawsWritable() { return !grantToken || grantScope === "full"; }
+async function refreshLaws() {
+  const data = await api("GET", "/api/laws");
+  const when = data.updated_at ? new Date(data.updated_at * 1000).toLocaleString("vi-VN") : "chưa có";
+  $("laws-meta").textContent = `Phiên bản ${data.version} · cập nhật gần nhất: ${when} · ${data.rules.length} luật`;
+  const writable = lawsWritable();
+  $("laws-write").classList.toggle("hidden", !writable);
+  $("laws-readonly-note").classList.toggle("hidden", writable);
+  $("laws-empty").classList.toggle("hidden", data.rules.length > 0);
+  const ol = $("laws-list");
+  ol.innerHTML = "";
+  for (const r of data.rules) {
+    const li = document.createElement("li");
+    const whenRule = r.created_at ? new Date(r.created_at * 1000).toLocaleString("vi-VN") : "";
+    li.innerHTML = `${esc(r.text)}<br><span class="muted">thêm bởi ${esc(r.created_by)}${whenRule ? " · " + esc(whenRule) : ""}</span>`;
+    if (writable) {
+      const editBtn = document.createElement("button");
+      editBtn.type = "button"; editBtn.textContent = "Sửa";
+      editBtn.onclick = () => openLawEditDialog(r);
+      const delBtn = document.createElement("button");
+      delBtn.type = "button"; delBtn.textContent = "Xoá";
+      delBtn.onclick = () => deleteLaw(r);
+      li.appendChild(document.createTextNode(" "));
+      li.appendChild(editBtn); li.appendChild(delBtn);
+    }
+    ol.appendChild(li);
+  }
+}
+$("law-add-btn").onclick = async () => {
+  const text = $("law-text").value.trim();
+  if (!text) { note("Chưa nhập nội dung luật.", true); return; }
+  try {
+    const data = await api("POST", "/api/laws", { text });
+    $("law-text").value = "";
+    note(`Đã thêm luật — luật cứng giờ ở phiên bản ${data.version}. Hãy thông báo trong phòng để agent đọc lại.`);
+    refreshLaws(); refreshAudit();
+  } catch (e) { note(e.message, true); }
+};
+let lawEditing = null;
+function openLawEditDialog(r) {
+  lawEditing = r;
+  $("law-edit-text").value = r.text;
+  $("law-edit-status").textContent = "";
+  $("law-edit-dialog").showModal();
+}
+$("law-edit-close-btn").onclick = () => $("law-edit-dialog").close();
+$("law-edit-save-btn").onclick = async () => {
+  if (!lawEditing) return;
+  const text = $("law-edit-text").value.trim();
+  if (!text) { $("law-edit-status").textContent = "Nội dung luật không được để trống."; return; }
+  try {
+    const data = await api("PUT", `/api/laws/${lawEditing.id}`, { text });
+    note(`Đã sửa luật — luật cứng giờ ở phiên bản ${data.version}.`);
+    $("law-edit-dialog").close();
+    refreshLaws(); refreshAudit();
+  } catch (e) { $("law-edit-status").textContent = "Lỗi: " + e.message; }
+};
+async function deleteLaw(r) {
+  if (!confirm(`Xoá luật này khỏi luật cứng?\n\n“${r.text}”\n\nXoá xong phiên bản luật tăng lên — agent đọc lại sẽ không còn luật này.`)) return;
+  try {
+    const data = await api("DELETE", `/api/laws/${r.id}`);
+    note(`Đã xoá luật — luật cứng giờ ở phiên bản ${data.version}.`);
+    refreshLaws(); refreshAudit();
+  } catch (e) { note(e.message, true); }
+}
+
+// ------------------------------------------------- laws announcement
+// One fixed sentence to paste into the room after the laws change.
+// Deliberately NOT a generated prompt and with NO law text inside:
+// the laws live only on the server, agents fetch the newest version
+// themselves with `bridge laws` when they hear this announcement.
+const LAWS_ANNOUNCEMENT = "tất cả agent vào đọc, cập nhật luật cứng và ghi vào bộ nhớ dài hạn";
+$("laws-prompt-btn").onclick = () => {
+  $("laws-prompt-text").value = LAWS_ANNOUNCEMENT;
+  $("laws-prompt-copy-status").textContent = "";
+  $("laws-prompt-box").showModal();
+};
+$("laws-prompt-copy-btn").onclick = async () => {
+  try { await navigator.clipboard.writeText($("laws-prompt-text").value); }
+  catch (e) { $("laws-prompt-text").select(); document.execCommand("copy"); }
+  $("laws-prompt-copy-status").textContent = "Đã chép câu thông báo.";
+};
+$("laws-prompt-close-btn").onclick = () => $("laws-prompt-box").close();
 
 // ---------------------------------------------------------------- dialog
 function openAgentDialog(a) {
@@ -759,7 +887,7 @@ $("totp-disable-btn").onclick = async () => {
   } catch (e) { note(e.message, true); }
 };
 
-function refreshAll() { refreshAgents(); refreshGrants(); refreshOps(); refreshJournal(); refreshAudit(); }
+function refreshAll() { refreshAgents(); refreshLaws(); refreshGrants(); refreshOps(); refreshJournal(); refreshAudit(); }
 $("refresh-btn").onclick = refreshAll;
 </script>
 </body>
