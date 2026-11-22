@@ -31,6 +31,7 @@ from .auth import AdminAuth
 from .delivery import DeliveryState
 from .grants import Grant, GrantStore, scope_allows
 from .journal import retention_report
+from .keydrop import KeydropError
 from .ops_config import OpsConfig
 from .registry import AgentRegistry, RegistryError
 from .secrets_store import SecretStore
@@ -65,6 +66,7 @@ class AdminApp:
         status_provider: Optional[Callable[[], dict]] = None,
         static_dir: Optional[str] = None,
         credentials=None,
+        keydrop=None,
     ):
         self.registry = registry
         self.secrets = secrets_store
@@ -86,6 +88,10 @@ class AdminApp:
         # AdminCredentials or None (None in legacy token-only setups:
         # password endpoints then answer 501).
         self.credentials = credentials
+        # KeydropClient or None: the SSH-key intake towards the
+        # coordination VM. None = feature not wired on this deployment;
+        # the ssh-key endpoint then answers 502.
+        self.keydrop = keydrop
 
     # ------------------------------------------------------------------
     # identity / authorization
@@ -205,6 +211,31 @@ class AdminApp:
                           {"length": len(body.get("bot_token", ""))},
                           grant_id=identity.grant_id)
         return 200, {"agent": self.registry.public_get(key)}
+
+    def set_ssh_key(self, identity: Identity, key: str, body: dict, headers):
+        """Install an agent's SSH public key on the coordination VM.
+
+        Sensitive (spec 6 class): admin session + step-up, or a full
+        grant. The page itself performs the install through the
+        keydrop account - no human intermediary (owner decision
+        2026-11-22). The registry is stamped ONLY after the VM-side
+        intake confirmed; any transport failure is a 502 and leaves
+        the profile untouched."""
+        self.authorize(identity, "set_ssh_key")  # sensitive: read/operate denied
+        self.require_step_up(identity, headers)
+        profile = self.registry.get(key)  # must exist
+        if self.keydrop is None:
+            raise KeydropError("ssh key intake is not wired on this deployment")
+        fingerprint = self.keydrop.submit(key, body.get("public_key", ""))
+        profile = self.registry.record_ssh_key(key, fingerprint)
+        self.audit.record(identity.name, "set_ssh_key", key,
+                          {"fingerprint": fingerprint},
+                          grant_id=identity.grant_id)
+        return 200, {
+            "agent": self.registry.public_get(key),
+            "fingerprint": fingerprint,
+            "ssh_key_added_at": profile.ssh_key_added_at,
+        }
 
     def queue(self, identity: Identity, key: str):
         self.authorize(identity, "view")
@@ -453,6 +484,8 @@ def make_handler(app: AdminApp):
                 return self._send_json(status, payload)
             except PermissionError as exc:
                 return self._send_json(403, {"error": str(exc)})
+            except KeydropError as exc:
+                return self._send_json(502, {"error": str(exc)})
             except (RegistryError, ValueError, KeyError, RuntimeError) as exc:
                 return self._send_json(400, {"error": str(exc)})
 
@@ -482,6 +515,8 @@ def make_handler(app: AdminApp):
                     return app.set_enabled(identity, key, True, body)
                 if action == "token" and method == "POST":
                     return app.set_token(identity, key, body, headers)
+                if action == "ssh-key" and method == "POST":
+                    return app.set_ssh_key(identity, key, body, headers)
                 if action == "queue" and method == "GET":
                     return app.queue(identity, key)
             if len(parts) == 5 and parts[:2] == ["api", "agents"] and parts[3] == "queue":

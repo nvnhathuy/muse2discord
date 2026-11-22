@@ -1,0 +1,7 @@
+[Unit]
+Description=Install pending agent SSH keys into the operator authorized_keys
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/agent-key-install

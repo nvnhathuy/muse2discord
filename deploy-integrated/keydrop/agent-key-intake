@@ -1,0 +1,43 @@
+#!/bin/bash
+# agent-key-intake — runs as the "keydrop" user on the coordination
+# VM, forced by the command= restriction in keydrop's authorized_keys
+# (the hub's SSH key can ONLY run this script, nothing else).
+#
+# Protocol: exactly 2 lines on stdin, at most ~2KB total:
+#   line 1: agent key        (^[a-z0-9_-]{1,32}$)
+#   line 2: ssh-ed25519 public key; an optional trailing comment is
+#           DISCARDED - the system assigns its own comment later.
+# On success appends "<agentkey>\tssh-ed25519 <blob>" to the pending
+# file and exits 0. On ANY format error: exit non-zero, write nothing.
+set -u
+
+PENDING_FILE="${KEYDROP_PENDING_FILE:-/var/lib/keydrop/pending.tsv}"
+AGENT_RE='^[a-z0-9_-]{1,32}$'
+KEY_RE='^ssh-ed25519 ([A-Za-z0-9+/]{40,}={0,3})( .*)?$'
+
+fail() { echo "agent-key-intake: $1" >&2; exit 1; }
+
+raw="$(head -c 2048)" || fail "cannot read stdin"
+[ -n "$raw" ] || fail "empty input"
+
+# Split into lines ($() has already stripped trailing newlines).
+agent_key="${raw%%$'\n'*}"
+rest="${raw#*$'\n'}"
+[ "$rest" != "$raw" ] || fail "expected exactly 2 lines"
+pub_line="${rest%%$'\n'*}"
+extra="${rest#*$'\n'}"
+if [ "$extra" != "$rest" ] && [ -n "${extra//[[:space:]]/}" ]; then
+  fail "unexpected extra data after line 2"
+fi
+
+[[ $agent_key =~ $AGENT_RE ]] || fail "bad agent key"
+if [[ $pub_line =~ $KEY_RE ]]; then
+  blob="${BASH_REMATCH[1]}"
+else
+  fail "bad public key"
+fi
+
+mkdir -p "$(dirname "$PENDING_FILE")" || fail "cannot create pending dir"
+printf '%s\t%s\n' "$agent_key" "ssh-ed25519 $blob" >> "$PENDING_FILE" \
+  || fail "cannot write pending file"
+exit 0

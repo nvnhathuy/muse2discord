@@ -15,6 +15,9 @@ services:
       BRIDGE_REGISTRY_DIR: /data/registry
       HUB_ADMIN_HOST: 0.0.0.0
       HUB_ADMIN_PORT: "8899"
+      # Keydrop: the admin page submits agent SSH keys to this
+      # account on the coordination VM (see deploy-integrated/keydrop).
+      # HUB_KEYDROP_TARGET: keydrop@<VM address>
     ports:
       - "100.x.y.z:8899:8899"  # admin page, tailnet only
     volumes:

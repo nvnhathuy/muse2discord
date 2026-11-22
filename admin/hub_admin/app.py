@@ -8,6 +8,9 @@ Environment:
   HUB_ADMIN_TOKEN      admin principal token (or admin_token.txt in the
                        state dir, mode 0600)
   HUB_JOURNAL_PATH     hub journal JSONL (default <state>/bridge.jsonl)
+  HUB_KEYDROP_TARGET   keydrop account on the coordination VM the page
+                       submits agent SSH keys to (e.g. keydrop@<VM>);
+                       empty = the ssh-key intake feature stays off
 
 On first boot the registry seeds itself from the legacy env-style
 agent configuration (AGENT_KEYS + <KEY>_* in the process environment)
@@ -24,6 +27,7 @@ from .auth import AdminAuth
 from .credentials import AdminCredentials
 from .delivery import DeliveryState
 from .grants import GrantStore
+from .keydrop import KeydropClient
 from .ops_config import OpsConfig
 from .registry import AgentRegistry
 from .secrets_store import SecretStore
@@ -92,6 +96,10 @@ def build_app(state_dir: str, *, delivery=None, status_provider=None) -> AdminAp
         ),
         auth=auth,
         credentials=credentials,
+        keydrop=KeydropClient(
+            state_dir,
+            target=os.environ.get("HUB_KEYDROP_TARGET", ""),
+        ),
         journal_path=os.environ.get(
             "HUB_JOURNAL_PATH", os.path.join(state_dir, "bridge.jsonl")
         ),

@@ -6,6 +6,11 @@ FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
 COPY hub/requirements.txt .
+# openssh-client: the admin page submits agent SSH keys to the VM
+# keydrop account (hub_admin.keydrop) and generates its own keypair.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openssh-client \
+    && rm -rf /var/lib/apt/lists/*
 RUN pip install --no-cache-dir -r requirements.txt \
     && groupadd --gid 10001 bridge \
     && useradd --uid 10001 --gid bridge --no-create-home bridge \

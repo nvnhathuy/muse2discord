@@ -1,0 +1,65 @@
+#!/bin/bash
+# agent-key-install — runs as ROOT on the coordination VM (systemd
+# oneshot, triggered by agent-key-install.path watching the pending
+# file; see the units next to this script).
+#
+# For every pending line: re-validate from scratch (the pending file
+# is NOT trusted just because the intake wrote it), skip key blobs
+# already present in the operator's authorized_keys, append new keys
+# as "ssh-ed25519 <blob> hub-agent:<agentkey>", log every decision to
+# /var/log/agent-key-install.log, then clear the pending batch.
+set -u
+
+PENDING_FILE="${KEYDROP_PENDING_FILE:-/var/lib/keydrop/pending.tsv}"
+AUTH_KEYS="${KEYDROP_AUTH_KEYS:-/home/debian/.ssh/authorized_keys}"
+AUTH_OWNER="${KEYDROP_AUTH_OWNER:-debian}"
+LOG_FILE="${KEYDROP_LOG_FILE:-/var/log/agent-key-install.log}"
+AGENT_RE='^[a-z0-9_-]{1,32}$'
+KEY_RE='^ssh-ed25519 ([A-Za-z0-9+/]{40,}={0,3})$'
+
+log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S %z')" "$*" >> "$LOG_FILE"; }
+
+fingerprint() {
+  python3 -c 'import base64,hashlib,sys; raw=base64.b64decode(sys.argv[1]); print("SHA256:"+base64.b64encode(hashlib.sha256(raw).digest()).decode().rstrip("="))' "$1" 2>/dev/null || echo "SHA256:?"
+}
+
+blob_present() {
+  awk -v blob="$1" '{ for (i=1;i<=NF;i++) if ($i==blob) { found=1; exit } } END { exit !found }' "$AUTH_KEYS"
+}
+
+[ -f "$PENDING_FILE" ] || exit 0
+work="$(mktemp)" || exit 1
+# Atomically claim the batch: keys submitted after this point land
+# in a fresh pending file and are handled by the next trigger.
+if ! mv "$PENDING_FILE" "$work"; then
+  rm -f "$work"
+  exit 0
+fi
+
+mkdir -p "$(dirname "$AUTH_KEYS")"
+[ -f "$AUTH_KEYS" ] || touch "$AUTH_KEYS"
+
+while IFS=$'\t' read -r agent_key key_line; do
+  [ -n "$agent_key" ] || continue
+  if ! [[ $agent_key =~ $AGENT_RE ]]; then
+    log "SKIP bad-agent-key agent=$agent_key"
+    continue
+  fi
+  if [[ $key_line =~ $KEY_RE ]]; then
+    blob="${BASH_REMATCH[1]}"
+  else
+    log "SKIP bad-key agent=$agent_key"
+    continue
+  fi
+  if blob_present "$blob"; then
+    log "SKIP duplicate agent=$agent_key fp=$(fingerprint "$blob")"
+    continue
+  fi
+  printf 'ssh-ed25519 %s hub-agent:%s\n' "$blob" "$agent_key" >> "$AUTH_KEYS"
+  log "ADD agent=$agent_key fp=$(fingerprint "$blob")"
+done < "$work"
+
+chown "$AUTH_OWNER:" "$AUTH_KEYS" 2>/dev/null || true
+chmod 600 "$AUTH_KEYS"
+rm -f "$work"
+exit 0

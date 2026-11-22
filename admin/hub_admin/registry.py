@@ -48,6 +48,11 @@ class AgentProfile:
     paused_by: str = ""
     paused_at: Optional[float] = None
     receive_deadline: Optional[int] = None  # None = hub default
+    # SSH key the admin page installed for this agent on the
+    # coordination VM (keydrop flow). Fingerprint only - the public
+    # key itself lives in the VM's authorized_keys, never here.
+    ssh_key_fingerprint: str = ""
+    ssh_key_added_at: Optional[float] = None
     notes: str = ""
     created_at: float = 0.0
     updated_at: float = 0.0
@@ -225,6 +230,19 @@ class AgentRegistry:
                     raise RegistryError(f"field {name!r} is not editable")
                 setattr(profile, name, value)
             self._validate(profile, ignore_key=key)
+            profile.updated_at = time.time()
+            self._save()
+            return profile
+
+    def record_ssh_key(self, key: str, fingerprint: str) -> AgentProfile:
+        """Stamp the fingerprint of the SSH key the admin page just
+        installed for this agent on the coordination VM. Called ONLY
+        after the keydrop submit succeeded - a failed submit must
+        leave the profile untouched."""
+        with self._lock:
+            profile = self.get(key)
+            profile.ssh_key_fingerprint = fingerprint
+            profile.ssh_key_added_at = time.time()
             profile.updated_at = time.time()
             self._save()
             return profile

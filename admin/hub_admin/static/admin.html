@@ -182,6 +182,18 @@
   </p>
 </dialog>
 
+<dialog id="ssh-key-dialog">
+  <h2 id="ssh-key-title">SSH key</h2>
+  <p id="ssh-key-current" class="muted">…</p>
+  <label>Public key của agent <textarea id="ssh-key-input" rows="3" style="width:100%"></textarea></label>
+  <p class="muted">Dán đúng một dòng dạng “ssh-ed25519 AAAA…”. Phần chú thích cuối dòng (nếu có) sẽ bị bỏ — hệ thống tự đặt chú thích riêng. Trang gửi key qua SSH tới tài khoản keydrop trên VM điều phối và VM tự thêm vào authorized_keys; key chỉ được ghi nhận khi VM xác nhận đã nhận.</p>
+  <p>
+    <button id="ssh-key-save-btn" type="button">Thêm key</button>
+    <button id="ssh-key-close-btn" type="button">Đóng</button>
+  </p>
+  <p id="ssh-key-status" class="muted"></p>
+</dialog>
+
 <script type="text/plain" id="sentinel-template">
 #!/bin/bash
 # Hub v2 sentinel (template — shown for agent key "deputy"; replace it with
@@ -365,6 +377,7 @@ async function refreshAgents() {
     mk("Hàng chờ", () => { $("queue-agent").value = a.key; loadQueue(); });
     if (canSensitive()) {
       mk("Thay token", () => setToken(a));
+      mk("SSH key", () => openSshKeyDialog(a));
       mk("Xoá", () => deleteAgent(a));
     }
     tbody.appendChild(tr);
@@ -415,7 +428,7 @@ function buildConnectPrompt(a, roster) {
 - Danh sách cả phòng (khoá — tên):
 ${rosterLines}
 
-Cách kết nối (kiến trúc bắt buộc): hub là trung tâm duy nhất; bạn KHÔNG tự vào Discord đọc tin. Tin được hub đẩy tới bạn qua lính canh: một script vòng lặp chạy trên máy của bạn, gọi lệnh \`bridge wait --agent ${a.key} --timeout 30\` bên trong container hub (đường vào: SSH tới VM điều phối của đội rồi exec vào container hub qua cầu Portainer — nếu máy bạn chưa có bộ dụng cụ này, hãy báo chủ phòng cấp gói lính canh mẫu chuẩn thay vì tự chế đường khác). Nhận tin từ wait → xử lý → trả lời bằng \`bridge say --agent ${a.key} --reply-to <id tin>\` (chỉ trả lời được tin đã được hub giao cho bạn; trả lời nhiều phần dùng --part, xong việc dùng --final; đã --final thì không say thêm).
+Cách kết nối (kiến trúc bắt buộc): hub là trung tâm duy nhất; bạn KHÔNG tự vào Discord đọc tin. Tin được hub đẩy tới bạn qua lính canh: một script vòng lặp chạy trên máy của bạn, gọi lệnh \`bridge wait --agent ${a.key} --timeout 50\` bên trong container hub (đường vào: SSH tới VM điều phối của đội rồi exec vào container hub qua cầu Portainer — nếu máy bạn chưa có bộ dụng cụ này, hãy báo chủ phòng cấp gói lính canh mẫu chuẩn thay vì tự chế đường khác). Nhận tin từ wait → xử lý → trả lời bằng \`bridge say --agent ${a.key} --reply-to <id tin>\` (chỉ trả lời được tin đã được hub giao cho bạn; trả lời nhiều phần dùng --part, xong việc dùng --final; đã --final thì không say thêm).
 
 Dùng NGUYÊN code mẫu lính canh dưới đây, chỉ thay khoá agent là của bạn — không tự viết lại lính canh.
 
@@ -453,6 +466,46 @@ $("prompt-copy-btn").onclick = async () => {
   $("prompt-copy-status").textContent = "Đã chép prompt.";
 };
 $("prompt-close-btn").onclick = () => $("prompt-box").close();
+
+// ---------------------------------------------------------------- ssh key
+let sshKeyAgent = null;
+function sshKeyStateText(a) {
+  if (a && a.ssh_key_fingerprint) {
+    const when = a.ssh_key_added_at ? new Date(a.ssh_key_added_at * 1000).toLocaleString("vi-VN") : "";
+    const fp = a.ssh_key_fingerprint;
+    const short = fp.length > 24 ? fp.slice(0, 24) + "…" : fp;
+    return `Đã thêm${when ? " · " + when : ""} · ${short}`;
+  }
+  return "Chưa có khoá";
+}
+function openSshKeyDialog(a) {
+  sshKeyAgent = a;
+  $("ssh-key-title").textContent = `SSH key — ${a.display_name}`;
+  $("ssh-key-current").textContent = "Trạng thái: " + sshKeyStateText(a);
+  $("ssh-key-input").value = "";
+  $("ssh-key-status").textContent = "";
+  $("ssh-key-dialog").showModal();
+}
+$("ssh-key-close-btn").onclick = () => $("ssh-key-dialog").close();
+$("ssh-key-save-btn").onclick = async () => {
+  if (!sshKeyAgent) return;
+  const publicKey = $("ssh-key-input").value.trim();
+  if (!publicKey) { $("ssh-key-status").textContent = "Chưa dán public key."; return; }
+  const headers = stepUpHeaders(); if (!headers) return;
+  $("ssh-key-status").textContent = "Đang gửi key lên VM điều phối…";
+  try {
+    const data = await api("POST", `/api/agents/${sshKeyAgent.key}/ssh-key`, { public_key: publicKey }, headers);
+    $("ssh-key-status").textContent = `Đã thêm key · ${data.fingerprint}`;
+    note(`Đã thêm SSH key cho ${sshKeyAgent.display_name}.`);
+    $("ssh-key-input").value = "";
+    await refreshAgents();
+    const updated = lastAgents.find((x) => x.key === sshKeyAgent.key);
+    if (updated) {
+      sshKeyAgent = updated;
+      $("ssh-key-current").textContent = "Trạng thái: " + sshKeyStateText(updated);
+    }
+  } catch (e) { $("ssh-key-status").textContent = "Lỗi: " + e.message; }
+};
 
 // ---------------------------------------------------------------- dialog
 function openAgentDialog(a) {

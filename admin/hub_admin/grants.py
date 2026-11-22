@@ -39,6 +39,7 @@ MAX_TTL = 24 * 3600         # 24 hours
 SENSITIVE_OPS = {
     "delete_agent",
     "set_bot_token",
+    "set_ssh_key",
     "reset_cursor",
     "ack_on_behalf",
     "force_release_bulk",
