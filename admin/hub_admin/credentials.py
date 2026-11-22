@@ -16,6 +16,11 @@ Storage is a single JSON file (mode 0600) holding:
   version bump kills every pre-existing session on its next check -
   that is what makes "reset kills all sessions" work even when the
   reset happens from the CLI while the server keeps running.
+- must_change_password: set ONLY by the first-boot seed (bootstrap).
+  While it is on, the API layer locks the admin session down to the
+  change-password endpoint until the password is replaced. Every
+  password set (change / recovery reset / CLI reset) drops the flag -
+  setting a password IS the way out of the forced change.
 """
 
 from __future__ import annotations
@@ -31,6 +36,11 @@ from typing import Optional
 
 ITERATIONS = 600_000
 MIN_PASSWORD_LENGTH = 8
+
+# First-boot default when the deployment sets no HUB_ADMIN_TOKEN:
+# deliberately well-known and weak - the forced first-login change
+# (must_change_password) is what makes it safe to ship.
+DEFAULT_PASSWORD = "admin123"
 
 
 def _hash(secret: str, salt: bytes, iterations: int = ITERATIONS) -> str:
@@ -74,6 +84,8 @@ class AdminCredentials:
         with self._lock:
             self._load()
             salt = _secrets.token_bytes(16)
+            # must_change_password is deliberately NOT carried over:
+            # any password set ends the forced first-login change.
             self._data = {
                 "algo": "pbkdf2_sha256",
                 "iterations": ITERATIONS,
@@ -85,6 +97,26 @@ class AdminCredentials:
                 "totp_secret": self._data.get("totp_secret") if self._data else None,
                 "totp_enrolled_at": self._data.get("totp_enrolled_at") if self._data else None,
             }
+            self._save()
+
+    # ------------------------------------------------------------------
+    # Forced first-login change: the flag exists only between the
+    # first-boot seed and the admin's first real password set.
+    # ------------------------------------------------------------------
+    def must_change_password(self) -> bool:
+        """Read fresh each call, like version(): a change made through
+        any path must unlock (or lock) sessions immediately."""
+        self._load()
+        return bool(self._data and self._data.get("must_change_password"))
+
+    def set_must_change_password(self) -> None:
+        """Arm the forced-change flag on a freshly seeded credential
+        (first boot only - build_app calls this right after seeding)."""
+        with self._lock:
+            self._load()
+            if not self._data:
+                raise ValueError("no admin password set yet")
+            self._data["must_change_password"] = True
             self._save()
 
     def verify(self, presented: str) -> bool:

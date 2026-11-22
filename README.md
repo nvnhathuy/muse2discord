@@ -104,7 +104,10 @@ Một trang web duy nhất (đăng nhập bằng mật khẩu admin), gồm:
   lệ duy nhất*: không ai ngoài admin được cấp/thu hồi grant. Token chỉ
   hiện **một lần** lúc cấp; thu hồi có hiệu lực **ngay lập tức**; mọi
   thao tác bằng grant đều ghi audit kèm id của grant.
-- **Mật khẩu admin**: đổi ngay trong trang. Quên mật khẩu thì dùng **mã
+- **Mật khẩu admin**: bản cài mới đăng nhập lần đầu bằng mật khẩu mặc
+  định `admin123` (hoặc `HUB_ADMIN_TOKEN` nếu có đặt) và trang **bắt
+  buộc đổi ngay** mới cho dùng tiếp; sau đó đổi bất cứ lúc nào trong
+  trang. Quên mật khẩu thì dùng **mã
   khôi phục** ở màn đăng nhập — mã chỉ lưu dạng băm, dùng một lần, dùng
   xong trang **tự sinh mã mới**. Mất cả mật khẩu lẫn mã khôi phục thì
   đặt lại bằng CLI trên máy chủ (xem mục Tài liệu liên quan).
@@ -263,8 +266,10 @@ CHANNEL_ID=<KEN_ID_PHONG>
 OWNER_ID=<USER_ID_CHU_PHONG>
 CONTEXT_COUNT=5
 
-# Trang quản trị: mật khẩu admin BAN ĐẦU (đổi ngay sau lần đăng nhập đầu)
-HUB_ADMIN_TOKEN=<MAT_KHAU_ADMIN_BAN_DAU>
+# Trang quản trị: mật khẩu admin ban đầu — KHÔNG bắt buộc.
+# Bỏ trống thì mật khẩu mặc định là admin123; dù đặt hay không, lần
+# đăng nhập đầu tiên trang đều bắt buộc đổi mật khẩu mới dùng tiếp.
+# HUB_ADMIN_TOKEN=<MAT_KHAU_ADMIN_BAN_DAU>
 
 # Keydrop: tài khoản nhận SSH key trên máy chủ (cài ở bước 7;
 # nếu tách hai máy thì là máy điều phối)
@@ -283,7 +288,7 @@ Giải thích các biến:
 | `<KEY>_RECEIVE_DEADLINE` | Không | Hạn nhận/trả lời tin (giây), tối thiểu 180; agent ở xa nên đặt cao hơn |
 | `GUILD_ID` / `CHANNEL_ID` / `OWNER_ID` | Có | Server / kênh phòng / chủ phòng |
 | `CONTEXT_COUNT` | Không | Số tin ngữ cảnh kèm mỗi đợt giao, mặc định 5 |
-| `HUB_ADMIN_TOKEN` | Có | Mật khẩu admin ban đầu của trang quản trị |
+| `HUB_ADMIN_TOKEN` | Không | Mật khẩu admin ban đầu của trang quản trị — chỉ đặt khi muốn mật khẩu đầu khác mặc định `admin123`; dù đặt hay không, lần đăng nhập đầu đều bắt buộc đổi mật khẩu |
 | `HUB_KEYDROP_TARGET` | Không* | Đích keydrop dạng `keydrop@<HOST_IP>` — máy chủ, hoặc máy điều phối nếu tách hai máy (*bắt buộc nếu dùng tính năng tự thêm SSH key) |
 
 Các biến cố định đã khai sẵn trong `deploy-integrated/compose.yaml`:
@@ -326,12 +331,16 @@ volume:
 
 ### Bước 6 — Đăng nhập lần đầu và khoá tài khoản admin
 
-1. Mở `http://<HUB_IP>:8899`, đăng nhập bằng mật khẩu trong
-   `HUB_ADMIN_TOKEN`.
-2. Vào mục **Tài khoản quản trị**: đổi mật khẩu ngay.
-3. Tạo **mã khôi phục** và cất ở nơi an toàn (ví dụ trình quản lý mật
-   khẩu). Mã chỉ hiện một lần; quên mật khẩu thì dùng mã này ở màn
-   đăng nhập, dùng xong trang cấp mã mới.
+1. Mở `http://<HUB_IP>:8899`, đăng nhập với tên đăng nhập `admin` và
+   mật khẩu **`admin123`** (hoặc giá trị `HUB_ADMIN_TOKEN` nếu bạn đã
+   đặt ở bước 3).
+2. Trang **bắt buộc đổi mật khẩu ngay** ở lần đăng nhập đầu: nhập mật
+   khẩu mới (ít nhất 8 ký tự, không được trùng mật khẩu mặc định) —
+   chưa đổi xong thì chưa vào được trang chính, mọi thao tác khác đều
+   bị khoá.
+3. Đổi xong, trang hiện **mã khôi phục một lần** — cất ngay ở nơi an
+   toàn (ví dụ trình quản lý mật khẩu). Quên mật khẩu thì dùng mã này
+   ở màn đăng nhập để đặt lại, dùng xong trang cấp mã mới.
 4. (Tuỳ chọn) Ghi danh **TOTP** để thao tác nhạy cảm dùng mã 6 số thay
    cho mật khẩu.
 
@@ -526,13 +535,17 @@ New agents start paused until the admin resumes them.
 MESSAGE CONTENT INTENT), collect the guild/channel/owner IDs, write an
 `.env` with `AGENT_KEYS`, per-agent `<KEY>_BOT_TOKEN` / `_BOT_ID` /
 `_CALL_TOKENS` / `_DISPLAY_NAME`, `GUILD_ID`, `CHANNEL_ID`,
-`OWNER_ID`, the initial admin password `HUB_ADMIN_TOKEN`, and
+`OWNER_ID`, optionally `HUB_ADMIN_TOKEN` (the first admin password —
+when unset it defaults to `admin123`, and either way the first login
+forces an immediate password change), and
 `HUB_KEYDROP_TARGET=keydrop@<HOST_IP>`; build with
 `docker build -f deploy-integrated/Dockerfile .` from the repo root;
 run `deploy-integrated/compose.yaml` (two volumes: `/data` for the
 journal, registry and credentials — back this up — and `/run` for the
-socket; publish the admin port on a LAN/tailnet address only); log in,
-change the password, store a recovery code; install the keydrop
+socket; publish the admin port on a LAN/tailnet address only); log in
+as `admin` with the default `admin123` (or your `HUB_ADMIN_TOKEN`),
+complete the forced first-login password change, and store the
+recovery code the page shows; install the keydrop
 scripts on the host (see
 `deploy-integrated/keydrop/README.md`); onboard each agent with the
 5-step in-page flow and the sample sentinel; verify with a roll call

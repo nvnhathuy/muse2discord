@@ -28,6 +28,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .audit import AuditLog
 from .auth import AdminAuth
+from .credentials import DEFAULT_PASSWORD
 from .delivery import DeliveryState
 from .grants import Grant, GrantStore, scope_allows
 from .journal import retention_report
@@ -117,6 +118,20 @@ class AdminApp:
         if identity.grant is None or not scope_allows(identity.grant.scope, op):
             raise PermissionError(f"operation {op!r} not allowed for this identity")
 
+    def password_change_pending(self, identity: Optional[Identity]) -> bool:
+        """True while a first-boot admin still owes the forced password
+        change. Only the admin's OWN session is gated - grant (agent)
+        identities are never affected: grants cannot even exist before
+        the bootstrap that arms the flag, and the flag lives on the
+        admin credentials, not on them."""
+        return bool(
+            identity is not None
+            and identity.kind == "admin"
+            and identity.session_id is not None
+            and self.credentials is not None
+            and self.credentials.must_change_password()
+        )
+
     def require_step_up(self, identity: Identity, headers) -> None:
         if identity.kind == "agent":
             # A "full" grant IS the admin's step-up decision, taken when
@@ -149,6 +164,8 @@ class AdminApp:
                 "name": identity.name,
                 "scope": identity.grant.scope if identity.grant else None,
                 "totp_enabled": bool(self.credentials and self.credentials.totp_secret()),
+                "must_change_password": bool(
+                    self.credentials and self.credentials.must_change_password()),
             },
         }
 
@@ -346,14 +363,31 @@ class AdminApp:
     def change_password(self, identity: Identity, body: dict):
         self._require_admin_session(identity)
         credentials = self._require_credentials()
-        if not credentials.verify(body.get("current_password", "")):
-            raise PermissionError("current password is wrong")
-        credentials.set_password(body.get("new_password", ""))
+        forced = credentials.must_change_password()
+        if not forced:
+            # Normal change: prove the current password first. During
+            # the forced first-login change the current-password proof
+            # is skipped - the session itself was just minted BY that
+            # password, re-typing it proves nothing.
+            if not credentials.verify(body.get("current_password", "")):
+                raise PermissionError("current password is wrong")
+        new_password = body.get("new_password", "")
+        if new_password == DEFAULT_PASSWORD:
+            raise ValueError("mật khẩu mới không được trùng mật khẩu mặc định")
+        credentials.set_password(new_password)  # also clears the forced flag
         # version bump kills every other session; keep the caller's own
         self.auth.restamp_session(identity.session_id)
         self.audit.record("admin", "change_password", "",
-                          {"sessions_invalidated": "all-others"})
-        return 200, {"ok": True}
+                          {"sessions_invalidated": "all-others",
+                           "forced_first_change": forced})
+        payload = {"ok": True, "must_change_password": False}
+        if forced and not credentials.has_active_recovery_code():
+            # First run: leave the account with a backup code, shown
+            # exactly once (same one-time mechanism as everywhere).
+            payload["recovery_code"] = credentials.generate_recovery_code()
+            self.audit.record("admin", "create_recovery_code", "",
+                              {"via": "forced_first_change"})
+        return 200, payload
 
     def create_recovery_code(self, identity: Identity):
         self._require_admin_session(identity)
@@ -461,7 +495,12 @@ def make_handler(app: AdminApp):
                     session = app.auth.login(body.get("password", body.get("token", "")))
                     if not session:
                         return self._send_json(401, {"error": "invalid admin password"})
-                    return self._send_json(200, {"ok": True}, {
+                    payload = {"ok": True}
+                    if app.credentials is not None:
+                        # First boot: tell the page to show the forced
+                        # change screen instead of the app.
+                        payload["must_change_password"] = app.credentials.must_change_password()
+                    return self._send_json(200, payload, {
                         "Set-Cookie": f"admin_session={session}; HttpOnly; Path=/; SameSite=Strict"})
                 if path == "/api/logout" and method == "POST":
                     identity = app.identify(self.headers)
@@ -480,6 +519,15 @@ def make_handler(app: AdminApp):
                 identity = app.identify(self.headers)
                 if identity is None:
                     return self._send_json(401, {"error": "authentication required"})
+                if app.password_change_pending(identity) and not (
+                    path == "/api/change-password" and method == "POST"
+                ):
+                    # Forced first-login change: until it is done, the
+                    # admin session may ONLY change the password (login,
+                    # logout and recovery are dispatched above, before
+                    # identity, and stay reachable). Grant identities
+                    # never enter this branch.
+                    return self._send_json(403, {"error": "password_change_required"})
                 status, payload = self._route(app, method, path, query, identity, self._body(), self.headers)
                 return self._send_json(status, payload)
             except PermissionError as exc:

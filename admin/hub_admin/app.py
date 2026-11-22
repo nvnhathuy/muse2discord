@@ -5,8 +5,11 @@ Environment:
   HUB_ADMIN_HOST       bind address (default 127.0.0.1; bind the tailnet
                        address at deployment - the page is tailnet-only)
   HUB_ADMIN_PORT       default 8899 (the page's OWN address, spec 5)
-  HUB_ADMIN_TOKEN      admin principal token (or admin_token.txt in the
-                       state dir, mode 0600)
+  HUB_ADMIN_TOKEN      OPTIONAL first-boot admin password (or
+                       admin_token.txt in the state dir, mode 0600).
+                       Unset, the first password is the well-known
+                       default "admin123"; either way the first login
+                       is forced to change it before anything else.
   HUB_JOURNAL_PATH     hub journal JSONL (default <state>/bridge.jsonl)
   HUB_KEYDROP_TARGET   keydrop account on the coordination VM the page
                        submits agent SSH keys to (e.g. keydrop@<VM>);
@@ -24,7 +27,7 @@ import os
 from .api import AdminApp, serve
 from .audit import AuditLog
 from .auth import AdminAuth
-from .credentials import AdminCredentials
+from .credentials import DEFAULT_PASSWORD, AdminCredentials
 from .delivery import DeliveryState
 from .grants import GrantStore
 from .keydrop import KeydropClient
@@ -56,17 +59,21 @@ def build_app(state_dir: str, *, delivery=None, status_provider=None) -> AdminAp
     ops = OpsConfig(os.path.join(state_dir, "ops_config.json"))
     credentials = AdminCredentials(os.path.join(state_dir, "admin_credentials.json"))
     if not credentials.exists:
-        # First boot: seed the password from the legacy admin token so
-        # existing deployments keep working; from then on only the
-        # PBKDF2 hash in admin_credentials.json is authoritative.
+        # First boot ONLY (no credentials file yet): seed the initial
+        # password - the deployment's HUB_ADMIN_TOKEN / admin_token.txt
+        # when provided, else the well-known default - and arm the
+        # forced first-login change. From then on only the PBKDF2 hash
+        # in admin_credentials.json is authoritative, and an existing
+        # file is NEVER re-seeded or flagged (running installs keep
+        # their current password and are not forced to change it).
         legacy = os.environ.get("HUB_ADMIN_TOKEN", "")
         if not legacy:
             token_file = os.path.join(state_dir, "admin_token.txt")
             if os.path.exists(token_file):
                 with open(token_file, "r", encoding="utf-8") as fh:
                     legacy = fh.read().strip()
-        if legacy:
-            credentials.set_password(legacy)
+        credentials.set_password(legacy or DEFAULT_PASSWORD)
+        credentials.set_must_change_password()
 
     def step_up(presented: str) -> bool:
         # Integrated mode (spec 6): once a TOTP secret is enrolled, the
