@@ -1,0 +1,16 @@
+# Additive v2 service. No v1 services, names, volumes, or networks are changed.
+services:
+  discord-hub-v2:
+    build: .
+    restart: unless-stopped
+    env_file: ${BRIDGE_ENV_FILE:-.env}
+    environment:
+      BRIDGE_JOURNAL: /data/bridge.jsonl
+      BRIDGE_SOCKET: /run/bridge.sock
+    volumes:
+      - bridge-v2-data:/data
+      - bridge-v2-run:/run
+    stop_grace_period: 20s
+volumes:
+  bridge-v2-data:
+  bridge-v2-run:

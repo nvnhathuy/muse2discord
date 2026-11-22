@@ -1,0 +1,7 @@
+hub.env
+__pycache__/
+*.pyc
+hub_inbox.jsonl
+.secrets/
+*.log
+.pytest_cache/

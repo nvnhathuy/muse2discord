@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+"""Thin blocking client; identity is explicit or inherited from BRIDGE_AGENT."""
+import argparse
+import json
+import os
+import socket
+import sys
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--socket", default=os.getenv("BRIDGE_SOCKET", "/run/bridge.sock"))
+    sub = p.add_subparsers(dest="command", required=True)
+    for command in ("wait", "say", "ack", "working"):
+        s = sub.add_parser(command)
+        s.add_argument("--agent", choices=("lead", "worker", "deputy"), default=os.getenv("BRIDGE_AGENT"))
+        if command == "wait":
+            s.add_argument("--timeout", type=float, default=540)
+        elif command == "say":
+            s.add_argument("--reply-to", required=True)
+            s.add_argument("--part", type=int)
+            s.add_argument("--final", action="store_true")
+        elif command == "working":
+            s.add_argument("id", nargs="?")
+            s.add_argument("--eta", type=float)
+        else:
+            s.add_argument("id")
+    args = vars(p.parse_args())
+    path = args.pop("socket")
+    if not args["agent"]:
+        p.error("use --agent or set BRIDGE_AGENT")
+    if args["command"] == "say":
+        args["content"] = sys.stdin.read(8193)
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.connect(path)
+            sock.sendall((json.dumps(args, ensure_ascii=False) + "\n").encode("utf-8"))
+            with sock.makefile("rb") as stream:
+                line = stream.readline(8 * 1024 * 1024)
+            response = json.loads(line)
+        print(json.dumps(response, ensure_ascii=False))
+        return 1 if "error" in response else 0
+    except (OSError, ValueError, AttributeError) as exc:
+        print(json.dumps({"error": {"code": "connection_failed", "message": str(exc)}}))
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
