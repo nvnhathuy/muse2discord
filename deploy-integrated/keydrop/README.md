@@ -116,6 +116,14 @@ khi cài.
   key hub đã cấp. Chủ hub mở khoá cho từng agent trong trang quản
   trị (việc nhạy cảm, ghi nhật ký); trang tự gửi yêu cầu rào lại
   key qua chính kênh keydrop này.
+- Cổng còn mở một kênh file bị nhốt (`hub-files ls|get|put|del`) để
+  agent bị khoá vẫn làm việc được: thư mục chung trên VM (mặc định
+  `~/hub-files` của user điều phối) gồm `shared/` — mọi agent
+  đọc/ghi (đẩy code, lấy đặc tả) — và `<agentkey>/` — ô riêng chỉ
+  agent đó vào được. Đường dẫn bị kiểm tra từng đoạn, chặn `../`,
+  đường tuyệt đối và symlink thoát ra ngoài; nội dung đi dạng
+  base64, tối đa 256KB mỗi file; thao tác ghi/xoá được ghi cùng
+  log của cổng.
 - Installer (root) kiểm tra lại toàn bộ, chống trùng theo blob khoá,
   giữ authorized_keys ở quyền 600 và chủ `debian`.
 - Muốn thu hồi một agent: xoá dòng có comment `hub-agent:<key>` khỏi

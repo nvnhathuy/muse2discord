@@ -21,12 +21,22 @@ The gate accepts exactly the two shapes the agent tooling uses:
    rebuilds the argv itself and injects --agent; a caller-supplied
    --agent naming another agent is rejected.
 
+3. The shared-files channel:  hub-files <ls|get|put|del> ...
+   A confined file area on the VM (default ~/hub-files) so a
+   locked agent can still WORK: push code, fetch specs. Layout:
+   "shared/" is readable and writable by every agent; "<agentkey>/"
+   is readable and writable only by that agent. Paths are relative,
+   segment-checked, and symlink escapes are refused. File content
+   travels base64, capped at 256 KiB. Laws do NOT live here - they
+   are read with "bridge laws" as before.
+
 Everything else is denied (exit 1) and logged. The gate is the whole
 point of "khoá trong hub": the door the hub gave the agent opens
 only onto the agent's own bridge surface — no shell, no wandering
 the VM.
 """
 import base64
+import json
 import os
 import re
 import shlex
@@ -172,6 +182,110 @@ def _validate_oneshot(agent: str, tokens: list) -> list | None:
     return ["python3", _wrapper()] + out[:1] + ["--agent", agent] + out[1:]
 
 
+MAX_FILE = 262144  # 256 KiB of raw content
+SEGMENT_RE = re.compile(r"^[A-Za-z0-9._][A-Za-z0-9._-]*$")
+
+
+def _files_base() -> str:
+    return os.environ.get("BRIDGE_GATE_FILES") or os.path.expanduser("~/hub-files")
+
+
+def _resolve_file(agent: str, rel: str):
+    """Map a channel path to a real path inside the files area, or
+    return None. The first segment must be "shared" or the agent's
+    own key; every segment is charset-checked; the real path must
+    stay under the real base (symlink escapes refused)."""
+    parts = rel.split("/")
+    if not (1 <= len(parts) <= 6) or len(rel) > 200:
+        return None
+    if parts[0] not in ("shared", agent):
+        return None
+    if any(not SEGMENT_RE.match(p) or p in (".", "..") for p in parts):
+        return None
+    base = os.path.realpath(_files_base())
+    target = os.path.realpath(os.path.join(base, *parts))
+    if target != base and not target.startswith(base + os.sep):
+        return None
+    return target
+
+
+def _files(agent: str, tokens: list) -> int:
+    """Run one hub-files command. Returns the process exit code."""
+    if len(tokens) < 3:
+        return _deny(agent, "hub-files: missing arguments")
+    sub, rel = tokens[1], tokens[2]
+    if sub not in ("ls", "get", "put", "del"):
+        return _deny(agent, f"hub-files: unknown subcommand {sub!r}")
+    base = _files_base()
+    os.makedirs(os.path.join(base, "shared"), exist_ok=True)
+    os.makedirs(os.path.join(base, agent), exist_ok=True)
+    target = _resolve_file(agent, rel)
+    if target is None:
+        return _deny(agent, f"hub-files: path outside the allowed area: {rel!r}")
+
+    if sub == "ls":
+        if len(tokens) != 3:
+            return _deny(agent, "hub-files ls: extra arguments")
+        if not os.path.isdir(target):
+            print("hub-files: not a directory", file=sys.stderr)
+            return 1
+        entries = []
+        for name in sorted(os.listdir(target)):
+            full = os.path.join(target, name)
+            entries.append({"name": name, "dir": os.path.isdir(full),
+                            "size": 0 if os.path.isdir(full) else os.path.getsize(full)})
+        print(json.dumps({"path": rel, "entries": entries}))
+        return 0
+
+    if sub == "get":
+        if len(tokens) != 3:
+            return _deny(agent, "hub-files get: extra arguments")
+        if not os.path.isfile(target) or os.path.islink(target):
+            print("hub-files: no such file", file=sys.stderr)
+            return 1
+        data = open(target, "rb").read()
+        if len(data) > MAX_FILE:
+            print("hub-files: file too large", file=sys.stderr)
+            return 1
+        print(base64.b64encode(data).decode())
+        return 0
+
+    if sub == "put":
+        if len(tokens) != 5 or tokens[3] != "--content-b64":
+            return _deny(agent, "hub-files put: expected --content-b64 <data>")
+        payload = tokens[4]
+        if len(payload) > 400000 or not B64_RE.match(payload):
+            return _deny(agent, "hub-files put: bad content encoding")
+        try:
+            data = base64.b64decode(payload, validate=True)
+        except Exception:
+            return _deny(agent, "hub-files put: bad base64")
+        if len(data) > MAX_FILE:
+            return _deny(agent, "hub-files put: file too large")
+        if os.path.isdir(target) or os.path.islink(target):
+            print("hub-files: target is a directory or link", file=sys.stderr)
+            return 1
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        tmp = target + ".tmp-gate"
+        with open(tmp, "wb") as fh:
+            fh.write(data)
+        os.replace(tmp, target)
+        _log(agent, f"ALLOW files put {rel} ({len(data)} bytes)")
+        print(f"OK {rel} {len(data)}")
+        return 0
+
+    # del
+    if len(tokens) != 3:
+        return _deny(agent, "hub-files del: extra arguments")
+    if not os.path.isfile(target) or os.path.islink(target):
+        print("hub-files: no such file", file=sys.stderr)
+        return 1
+    os.remove(target)
+    _log(agent, f"ALLOW files del {rel}")
+    print(f"OK {rel}")
+    return 0
+
+
 def main() -> int:
     if len(sys.argv) != 2 or not AGENT_RE.match(sys.argv[1]):
         print("agent-bridge-gate: bad invocation", file=sys.stderr)
@@ -196,6 +310,8 @@ def main() -> int:
         tokens = shlex.split(command)
     except ValueError:
         return _deny(agent, "unparseable command")
+    if tokens and tokens[0] == "hub-files":
+        return _files(agent, tokens)
     argv = _validate_oneshot(agent, tokens)
     if argv is None:
         return _deny(agent, "command outside the bridge grammar")

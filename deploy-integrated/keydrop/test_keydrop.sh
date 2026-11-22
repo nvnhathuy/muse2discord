@@ -149,6 +149,32 @@ check "gate cho qua laws của chính agent" \
 OUT="$(SSH_ORIGINAL_COMMAND="python3 ~/portainer_bridge.py wait --agent testagent --timeout 30; rm -rf /" python3 ./agent-bridge-gate testagent 2>/dev/null)"
 check "gate chặn lệnh ghép bằng dấu chấm phẩy" test -z "$OUT"
 
+# ------------------------------------------------------------- gate: files
+export BRIDGE_GATE_FILES="$TMP/hub-files"
+OUT="$(SSH_ORIGINAL_COMMAND="hub-files put testagent/note.txt --content-b64 aGVsbG8=" python3 ./agent-bridge-gate testagent 2>/dev/null)"
+check "files: put vào ô riêng của mình" test "${OUT#OK}" != "$OUT"
+check "files: nội dung đã nằm đúng chỗ trên đĩa" \
+  test "$(cat "$TMP/hub-files/testagent/note.txt" 2>/dev/null)" = "hello"
+OUT="$(SSH_ORIGINAL_COMMAND="hub-files get testagent/note.txt" python3 ./agent-bridge-gate testagent 2>/dev/null)"
+check "files: get lại đúng nội dung (base64)" test "$OUT" = "aGVsbG8="
+OUT="$(SSH_ORIGINAL_COMMAND="hub-files ls testagent" python3 ./agent-bridge-gate testagent 2>/dev/null)"
+check "files: ls thấy file của mình" test "${OUT#*note.txt}" != "$OUT"
+OUT="$(SSH_ORIGINAL_COMMAND="hub-files put shared/spec.md --content-b64 c3BlYw==" python3 ./agent-bridge-gate testagent 2>/dev/null)"
+OUT2="$(SSH_ORIGINAL_COMMAND="hub-files get shared/spec.md" python3 ./agent-bridge-gate otheragent 2>/dev/null)"
+check "files: agent khác đọc được thư mục shared" test "$OUT2" = "c3BlYw=="
+OUT="$(SSH_ORIGINAL_COMMAND="hub-files get testagent/note.txt" python3 ./agent-bridge-gate otheragent 2>/dev/null)"
+check "files: agent khác KHÔNG vào được ô riêng" test -z "$OUT"
+OUT="$(SSH_ORIGINAL_COMMAND="hub-files get shared/../../etc/passwd" python3 ./agent-bridge-gate testagent 2>/dev/null)"
+check "files: chặn đường dẫn ../ thoát ra ngoài" test -z "$OUT"
+OUT="$(SSH_ORIGINAL_COMMAND="hub-files get /etc/passwd" python3 ./agent-bridge-gate testagent 2>/dev/null)"
+check "files: chặn đường dẫn tuyệt đối" test -z "$OUT"
+BIG="$(python3 -c "import base64; print(base64.b64encode(b'x' * 300000).decode())")"
+OUT="$(SSH_ORIGINAL_COMMAND="hub-files put testagent/big.bin --content-b64 $BIG" python3 ./agent-bridge-gate testagent 2>/dev/null)"
+check "files: chặn file quá cỡ (300KB)" test -z "$OUT"
+OUT="$(SSH_ORIGINAL_COMMAND="hub-files del testagent/note.txt" python3 ./agent-bridge-gate testagent 2>/dev/null)"
+OUT2="$(SSH_ORIGINAL_COMMAND="hub-files get testagent/note.txt" python3 ./agent-bridge-gate testagent 2>/dev/null)"
+check "files: del xong thì get không còn" test -z "$OUT2"
+
 echo
 echo "keydrop tests: $pass ok, $fail fail"
 [ "$fail" -eq 0 ]
