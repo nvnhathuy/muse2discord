@@ -45,6 +45,10 @@ SENSITIVE_OPS = {
     "ack_on_behalf",
     "force_release_bulk",
     "edit_ops_config",
+    # API-agent provider keys (issue #22 section 1.5): same class as
+    # bot tokens - admin principal or a full grant, plus step-up.
+    "set_api_config",
+    "set_api_key",
 }
 
 # What an "operate" grant may do (normal operations, spec section 6).

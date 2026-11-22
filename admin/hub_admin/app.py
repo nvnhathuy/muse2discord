@@ -25,6 +25,7 @@ from __future__ import annotations
 import os
 
 from .api import AdminApp, serve
+from .api_agents import ApiAgentsStore
 from .audit import AuditLog
 from .auth import AdminAuth
 from .credentials import DEFAULT_PASSWORD, AdminCredentials
@@ -105,6 +106,7 @@ def build_app(state_dir: str, *, delivery=None, status_provider=None) -> AdminAp
         auth=auth,
         credentials=credentials,
         laws=LawsStore(os.path.join(state_dir, "laws.json")),
+        api_agents=ApiAgentsStore(state_dir),
         keydrop=KeydropClient(
             state_dir,
             target=os.environ.get("HUB_KEYDROP_TARGET", ""),

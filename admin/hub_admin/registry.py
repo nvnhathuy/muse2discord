@@ -26,6 +26,12 @@ RESERVED_KEYS = {"hub"}
 KEY_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 MIN_RECEIVE_DEADLINE = 180  # seconds, per current hub rules
 SEAT_TYPES = ("live", "api")
+# Execution model (issue #22): "ssh" agents run on their own machine
+# and reach the hub through the bridge; "api" agents are executed by
+# the hub itself from a provider API key. kind and seat_type describe
+# the same axis and are kept in sync: kind == "api" <=> seat_type ==
+# "api"; every other seat is kind == "ssh".
+AGENT_KINDS = ("ssh", "api")
 
 
 class RegistryError(ValueError):
@@ -41,6 +47,10 @@ class AgentProfile:
     call_tokens: List[str] = field(default_factory=list)
     receive_all: bool = False
     seat_type: str = "live"  # "live" = own runner/sentinel; "api" = hub-side API runner
+    # Execution model (issue #22). None only transiently: __post_init__
+    # derives it from seat_type for records written before the field
+    # existed (an "api" seat is an API agent; anything else is SSH).
+    kind: Optional[str] = None
     role: str = ""
     description: str = ""
     enabled: bool = False  # new agents start paused (spec 4.2)
@@ -63,6 +73,10 @@ class AgentProfile:
     notes: str = ""
     created_at: float = 0.0
     updated_at: float = 0.0
+
+    def __post_init__(self):
+        if self.kind is None:
+            self.kind = "api" if self.seat_type == "api" else "ssh"
 
     def public_dict(self, token_meta: Optional[dict] = None) -> dict:
         """Serialization for the admin page. Never contains secrets."""
@@ -156,6 +170,10 @@ class AgentRegistry:
             raise RegistryError("display_name must not be empty")
         if profile.seat_type not in SEAT_TYPES:
             raise RegistryError(f"seat_type must be one of {SEAT_TYPES}")
+        if profile.kind not in AGENT_KINDS:
+            raise RegistryError(f"kind must be one of {AGENT_KINDS}")
+        if (profile.kind == "api") != (profile.seat_type == "api"):
+            raise RegistryError("kind and seat_type disagree on the API axis")
         if profile.receive_deadline is not None and profile.receive_deadline < MIN_RECEIVE_DEADLINE:
             raise RegistryError(
                 f"receive_deadline must be >= {MIN_RECEIVE_DEADLINE}s or unset"
@@ -201,6 +219,20 @@ class AgentRegistry:
             if key in self._agents:
                 raise RegistryError(f"agent {key!r} already exists")
             now = time.time()
+            # kind (issue #22) and seat_type are two names for the same
+            # axis: an explicit kind wins, an explicit "api" seat
+            # implies kind="api", otherwise the agent is an SSH agent.
+            kind = data.get("kind")
+            seat_type = data.get("seat_type")
+            if kind is not None:
+                if kind not in AGENT_KINDS:
+                    raise RegistryError(f"kind must be one of {AGENT_KINDS}")
+                implied_seat = "api" if kind == "api" else "live"
+                if seat_type is not None and (seat_type == "api") != (kind == "api"):
+                    raise RegistryError("kind and seat_type disagree on the API axis")
+                seat_type = seat_type or implied_seat
+            else:
+                kind = "api" if seat_type == "api" else "ssh"
             profile = AgentProfile(
                 key=key,
                 display_name=data.get("display_name", ""),
@@ -208,7 +240,8 @@ class AgentRegistry:
                 bot_username=data.get("bot_username", ""),
                 call_tokens=list(data.get("call_tokens") or []),
                 receive_all=bool(data.get("receive_all", False)),
-                seat_type=data.get("seat_type", "live"),
+                seat_type=seat_type or "live",
+                kind=kind,
                 role=data.get("role", ""),
                 description=data.get("description", ""),
                 enabled=False,  # spec 4.2: new agents start paused
@@ -237,6 +270,10 @@ class AgentRegistry:
                 if name not in self._EDITABLE:
                     raise RegistryError(f"field {name!r} is not editable")
                 setattr(profile, name, value)
+            if "seat_type" in data:
+                # Keep the execution model in sync with the seat axis:
+                # flipping the seat flips kind with it (issue #22).
+                profile.kind = "api" if profile.seat_type == "api" else "ssh"
             self._validate(profile, ignore_key=key)
             profile.updated_at = time.time()
             self._save()
@@ -316,6 +353,7 @@ class AgentRegistry:
                     "receive_all": p.receive_all,
                     "receive_deadline": p.receive_deadline,
                     "seat_type": p.seat_type,
+                    "kind": p.kind,
                 }
                 for key, p in self._agents.items()
                 if p.enabled
