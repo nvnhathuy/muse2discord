@@ -17,6 +17,9 @@ máy chủ chạy hub, exec vào container hub và treo lệnh `bridge wait` —
 đẩy tin tới qua đường đó khi có tin được định tuyến cho agent. Agent trả
 lời bằng `bridge say`. Nhờ vậy agent không cần token Discord, không cần
 quyền truy cập máy chủ chat, và hub kiểm soát toàn bộ việc ai nhận tin gì.
+Riêng agent loại **API** không có máy riêng: hub tự thực thi thay chúng
+ngay trong container (xem "Bộ thực thi agent API" ở mục 1) — chúng không
+có lính canh, không có SSH key, không có đường nào khác ngoài hub.
 
 Kiến trúc tối thiểu chỉ cần **một máy chủ Linux** chạy Docker và có SSH:
 hub chạy trên máy đó, lính canh SSH thẳng vào máy đó. Trường hợp hub chạy
@@ -84,6 +87,16 @@ Cấu trúc repo:
   tự nói chuyện vô hạn.
 - **Ngữ cảnh kèm theo**: mỗi đợt giao tin kèm vài tin gần nhất trong
   phòng (số lượng cấu hình được) để agent nắm bối cảnh.
+- **Bộ thực thi agent API (trong hub)**: agent loại API không cần máy
+  riêng hay lính canh — khi một tin được giao cho chúng, hub tự gọi API
+  của nhà cung cấp model ngay trong tiến trình hub: báo `working`, đăng
+  tin "<tên agent> đã nhận, đang trả lời...", gọi **song song mọi model**
+  đã cấu hình (timeout 40 giây/model, 45 giây tổng, chạy ở luồng riêng
+  không chặn vòng sự kiện) và chốt bằng đáp án thành công đầu tiên (cắt
+  tối đa 1.900 ký tự). Agent đang tạm dừng, chưa có cấu hình hoặc chưa
+  có API key thì hub **không thực thi** — tin giữ nguyên trong hàng chờ
+  như khi agent vắng mặt. Mọi lỗi của bộ thực thi được bọc kín: nó không
+  bao giờ làm chết hub hay các bot khác.
 
 ### Trang quản trị
 
@@ -156,6 +169,22 @@ Một trang web duy nhất (đăng nhập bằng mật khẩu admin), gồm:
   này cho agent mới.
 - **Agent mới mặc định ở trạng thái Tạm dừng** — chỉ nhận tin sau khi
   admin bấm "Mở lại".
+- **Agent API (thêm ngay trong trang)**: khi tạo agent, chọn loại
+  **API** thay cho SSH — form hiện thêm nhà cung cấp (Gemini / OpenAI),
+  ô dán **API key** (ô mật khẩu, không hiện lại) và danh sách model
+  (để trống thì dùng danh sách mặc định của nhà cung cấp; riêng Gemini
+  có sẵn 4 model đua nhau). Cấu hình API lưu ở
+  `registry/api_agents.json`, key lưu ở file riêng
+  `registry/api-keys/<khoá-agent>.key`, cả hai đều quyền `600` và nạp
+  nóng không cần khởi động lại. **Key không bao giờ được trả ra
+  ngoài**: trang, API và audit chỉ hiện trạng thái đã có/chưa có key.
+  Đặt cấu hình, đặt/đổi key là **thao tác nhạy cảm** (admin hoặc quyền
+  tạm mức full, kèm xác thực lại mật khẩu/TOTP; mức operate bị từ
+  chối). Tạo agent API mà thiếu key thì trang từ chối và không để lại
+  hồ sơ nửa vời; xoá agent API là xoá luôn cấu hình và file key. Agent
+  API không có prompt kết nối cũng không có nút SSH key — chúng chạy
+  ngay trong hub, điều kiện duy nhất là bot Discord đúng token đã khai
+  trong file env.
 
 ### Phía agent
 
@@ -163,6 +192,13 @@ Một trang web duy nhất (đăng nhập bằng mật khẩu admin), gồm:
   chủ, vòng `bridge wait` qua `docker exec` vào container hub (khi tách
   hai máy: SSH tới máy điều phối, exec qua cầu `portainer_bridge.py`);
   có tin là đánh thức agent, agent xử lý xong mở lại lính canh ngay.
+  Lính canh **không bao giờ tự chết hẳn**: lỗi liên tiếp chỉ làm tăng
+  thời gian chờ giữa các lần thử (15 → 30 → 60 giây, trần 60), và mỗi
+  vòng chờ bị **cắt cứng ở 75 giây** — một kết nối treo không giữ chân
+  lính canh vô hạn được; lượt bị cắt có ghi mốc thời gian vào nhật ký
+  riêng (`~/sentinel-cuts.log`).
+- Agent loại API **không có phía agent**: không máy riêng, không lính
+  canh, không SSH key — toàn bộ vòng đời của chúng nằm trong hub.
 - `agent/say.sh`: mẫu lệnh trả lời (`bridge say --reply-to ... --final`).
 - `agent/AGENT_SIDE.md`: luật ứng xử phía agent (luật gọi tên, kỷ luật
   trả lời, chống trùng).
@@ -512,9 +548,11 @@ Trên máy của agent (chi tiết ở `agent/AGENT_SIDE.md`):
 ## 4. Vận hành
 
 - **Sao lưu**: sao lưu volume `/data` (nội dung: `bridge.jsonl`,
-  thư mục `registry/` chứa hồ sơ agent + thông tin đăng nhập admin +
-  kho bí mật token, khoá SSH của hub). Mất `/data` là mất đội hình và
-  quyền admin — phải dựng lại từ env và đặt lại mật khẩu qua CLI.
+  thư mục `registry/` chứa hồ sơ agent, cấu hình agent API
+  (`api_agents.json`) và file key của chúng (`api-keys/`), thông tin
+  đăng nhập admin + kho bí mật token, khoá SSH của hub). Mất `/data`
+  là mất đội hình và quyền admin — phải dựng lại từ env và đặt lại
+  mật khẩu qua CLI.
 - **Nâng cấp**: build lại image (bước 4) rồi tạo lại container với
   **cùng hai volume** — dữ liệu và đội hình giữ nguyên:
 
@@ -564,6 +602,41 @@ Trên máy của agent (chi tiết ở `agent/AGENT_SIDE.md`):
   lại mật khẩu; không bật vẫn an toàn bằng mật khẩu + mã khôi phục.
 - **Prompt kết nối không chứa token bot** — gửi prompt cho agent qua
   kênh thường được, token vẫn chỉ nằm ở hub.
+- **Agent SSH bị rào bằng cổng bắt buộc (agent-bridge-gate)**: key do
+  hub cài cho agent chỉ chạy được đúng ba thứ — (1) vòng lặp lính canh
+  **khớp nguyên văn** bản chuẩn duy nhất, (2) các lệnh cầu một lần
+  (`wait`/`say`/`ack`/`working`/`laws`) mang đúng khoá agent của
+  chính nó, (3) kênh file `hub-files`: thư mục `shared/` cả đội
+  đọc/ghi và thư mục riêng mang tên agent (chỉ chủ nhân vào được);
+  đường dẫn bị kiểm tra từng đoạn (cấm `..`, cấm đường tuyệt đối,
+  chống symlink thoát ra ngoài), mỗi file tối đa 256KB, ghi theo kiểu
+  nguyên tử. Mọi lệnh ngoài bề mặt này bị **từ chối và ghi vào nhật
+  ký cổng**. Agent bị khoá trong hub theo mặc định; mở khoá là thao
+  tác nhạy cảm trong trang quản trị, có ghi audit.
+- **Agent API bị khoá cứng bằng code — không bằng luật miệng**: (1)
+  model **không có bất kỳ bề mặt công cụ nào**: đáp án của model được
+  dùng nguyên văn làm tin trả lời trong phòng, kể cả khi đáp án trông
+  giống một mệnh lệnh hay một lệnh gọi công cụ; (2) đích gọi ra được
+  **ghim cứng trong code** vào đúng host của nhà cung cấp (Gemini /
+  OpenAI) — không một URL nào được lấy từ cấu hình hay từ nội dung
+  tin nhắn; (3) API key chỉ được gửi trong header tới đúng host của
+  nhà cung cấp đó, và **không xuất hiện** trong nhật ký, audit, thông
+  báo lỗi hay bất kỳ đầu ra nào của hệ thống; (4) **ngân sách 500
+  lượt gọi nhà cung cấp / agent / ngày**, được đếm bằng code *trước*
+  mỗi lần gọi và lưu bền qua khởi động lại (`api_budget.json`) — hết
+  ngân sách thì bộ thực thi ngừng gọi và đăng tin báo hết lượt vào
+  phòng; (5) **luật cứng được tiêm từ file thật mỗi lượt**: toàn văn
+  luật hiện hành kèm số phiên bản được đọc từ `laws.json` của hub và
+  đưa vào prompt ở mọi lần thực thi — agent API không tự đọc luật
+  được thì hub đưa tận nơi, nên chúng không thể nhớ sai luật hay bịa
+  ra luật không có thật; (6) prompt bị cắt ở 6.000 ký tự và đáp án ở
+  1.900 ký tự, nên một lượt thực thi luôn nằm trong giới hạn của
+  Discord và của hub.
+- **Thao tác với API key là thao tác nhạy cảm**: đặt cấu hình API,
+  đặt/đổi key của agent đòi hỏi phiên admin hoặc quyền tạm mức full
+  kèm xác thực lại (mật khẩu hoặc mã TOTP); quyền tạm mức operate bị
+  từ chối (403). Audit của các thao tác này chỉ ghi nhà cung cấp và
+  số lượng model — không ghi key, không ghi một phần của key.
 
 ---
 
@@ -627,6 +700,46 @@ for onboarding new agents, and self-service SSH key onboarding: paste
 an agent's public key and the page installs it on the host through a
 forced-command *keydrop* account that can only add keys.
 New agents start paused until the admin resumes them.
+
+**Two kinds of agents.** *Live* agents run the reference sentinel on
+their own machine (the sentinel never exits permanently — consecutive
+errors only back off 15s → 30s → 60s, and each wait turn is hard-capped
+at 75 seconds so a hung connection cannot pin it forever). *API*
+agents have no machine, no sentinel and no SSH key at all: the hub
+itself executes for them. When a message is routed to an API agent,
+the hub acknowledges it, posts a "received, answering..." part, races
+**all configured models in parallel** (40s per model, 45s overall, off
+the event loop) and posts the first successful answer (trimmed to
+1,900 characters). API agents are created entirely from the admin
+page — kind, provider (Gemini / OpenAI), model list and API key in one
+form; configuration lives in `registry/api_agents.json` and each key
+in its own `registry/api-keys/<agent>.key` file (mode 0600, hot
+reloaded). A suspended API agent, or one missing configuration or a
+key, is simply not executed — its messages stay queued.
+
+**Security model, in brief.** Hub-installed SSH keys are *locked by
+default* behind a forced-command gate (`agent-bridge-gate`) that
+admits exactly three things: the byte-identical reference sentinel
+loop, one-shot bridge commands (`wait`/`say`/`ack`/`working`/`laws`)
+carrying the agent's own key, and the `hub-files` channel (a shared
+directory plus a private per-agent directory, with per-segment path
+checks, symlink-escape protection and a 256KB per-file cap). Anything
+else is denied and logged. API agents are fenced **in code, not by
+policy**: (1) the model has no tool surface whatsoever — its output
+is used verbatim as a plain chat reply, even if it looks like a
+command; (2) provider hosts are pinned in the source code — no URL
+ever comes from configuration or message content; (3) an API key is
+sent only in the header to its own provider's host and never appears
+in logs, audit records or error messages; (4) a hard budget of **500
+provider calls per agent per day** is counted in code *before* every
+call and persisted across restarts — when it runs out, execution
+stops and the room is told; (5) the current house rules are injected
+from the hub's real `laws.json` (full text plus version number) into
+every prompt, so an API agent cannot misremember or invent rules;
+(6) setting an API configuration or key is a sensitive operation —
+admin session or full grant plus step-up re-authentication; operate
+grants are refused, and the audit record contains only the provider
+and the model count, never the key.
 
 **Deployment, in short:** create one Discord bot per agent (enable
 MESSAGE CONTENT INTENT), collect the guild/channel/owner IDs, write an
