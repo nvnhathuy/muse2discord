@@ -256,6 +256,8 @@ class ApiTests(unittest.TestCase):
         conn.close()
         self.assertEqual(res.status, 200)
         self.assertIn("Hướng dẫn quản trị", body)
+        self.assertIn("Hai loại agent", body)
+        self.assertIn("web chat", body)
 
     def test_login_form_is_password_manager_friendly(self):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
@@ -309,6 +311,28 @@ class ApiTests(unittest.TestCase):
         self.assertIn("authorized_keys", seg)
         self.assertIn("PUBLIC key", seg)
         self.assertIn("trang tự thêm", seg)
+
+    def test_page_has_forced_first_change_screen(self):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        conn.request("GET", "/")
+        res = conn.getresponse()
+        body = res.read().decode("utf-8")
+        conn.close()
+        self.assertEqual(res.status, 200)
+        # the forced first-login change screen exists, starts hidden,
+        # and asks only for the new password (twice) - never the current
+        self.assertIn('id="force-change-box"', body)
+        self.assertIn('id="fc-new"', body)
+        self.assertIn('id="fc-new2"', body)
+        self.assertIn('id="fc-change-btn"', body)
+        seg = body[body.index('id="force-change-box"'):body.index('<main id="app"')]
+        # exactly two password inputs (new + repeat): no current-password field
+        self.assertEqual(seg.count('type="password"'), 2)
+        # the login handler branches on the server flag into that screen
+        self.assertIn("must_change_password", body)
+        self.assertIn("force-change-box", body)
+        # the in-page guide documents the admin123 first login
+        self.assertIn("admin123", body)
 
 
 if __name__ == "__main__":

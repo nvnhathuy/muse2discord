@@ -53,6 +53,17 @@
   <p class="muted">Mất cả mã khôi phục? Dùng đường dự phòng qua SSH — xem file HUONG-DAN-RESET-MAT-KHAU.md trong gói.</p>
 </section>
 
+<section id="force-change-box" class="card hidden">
+  <h2>Đổi mật khẩu lần đầu — bắt buộc</h2>
+  <p>Tài khoản đang dùng mật khẩu ban đầu của bản cài mới (mặc định hoặc do bản cài đặt sẵn). Vì an toàn, bạn phải đặt mật khẩu mới trước khi vào trang quản trị — mọi thao tác khác đang bị khoá cho tới khi đổi xong.</p>
+  <label>Mật khẩu mới (ít nhất 8 ký tự, không được là mật khẩu mặc định) <input id="fc-new" type="password" size="30" autocomplete="new-password"></label>
+  <label>Nhập lại mật khẩu mới <input id="fc-new2" type="password" size="30" autocomplete="new-password"></label>
+  <button id="fc-change-btn">Đổi mật khẩu</button>
+  <p class="muted">Không cần nhập lại mật khẩu hiện tại — bạn vừa đăng nhập bằng nó.</p>
+  <div id="fc-issued"></div>
+  <p><button id="fc-enter-btn" class="hidden">Đã cất mã khôi phục — vào trang quản trị</button></p>
+</section>
+
 <main id="app" class="hidden">
   <p><button id="logout-btn">Đăng xuất</button></p>
   <section class="card">
@@ -131,6 +142,7 @@
     <details>
       <summary><strong>Hướng dẫn quản trị</strong></summary>
       <ol>
+        <li><strong>Hai loại agent — kiểm tra điều kiện trước khi thêm:</strong> agent <em>Muse</em> cần một máy chạy thường trực với một phiên Muse đang sống, lính canh dùng nguyên code mẫu trong prompt kết nối; agent <em>API</em> cần API key còn quota do bạn tự tạo và một runner chạy thường trực. Hệ thống KHÔNG đáp ứng được: tài khoản AI dạng web chat trên trình duyệt (không có cơ chế để hub đánh thức — không thêm làm agent được); máy của agent tắt hoặc ngủ (hub chỉ xếp hàng tin, không ai trả lời); bot chưa được mời vào server hoặc thiếu quyền trong kênh (hub không thấy tin của phòng). Chi tiết đầy đủ xem README của repo.</li>
         <li><strong>Thêm agent (trọn quy trình 5 bước):</strong>
           <ol>
             <li>Tạo bot trong Discord Developer Portal và mời bot vào server.</li>
@@ -141,7 +153,7 @@
           </ol></li>
         <li><strong>Tạm dừng 2 mức:</strong> mức hub (nút Tạm dừng trong trang) chặn định tuyến ngay lập tức, bot vẫn online trong phòng; mức agent do phía agent tự dừng, hub không can thiệp.</li>
         <li><strong>Quyền tạm:</strong> chỉ admin mới được cấp và thu hồi. Grant mức full có toàn quyền như admin, TRỪ quyền cấp grant. Token chỉ hiện đúng 1 lần lúc cấp — hãy đưa ngay cho agent. Thu hồi có hiệu lực ngay lập tức.</li>
-        <li><strong>Mật khẩu admin:</strong> đổi ngay trong trang (mục Tài khoản quản trị). Quên mật khẩu thì dùng mã khôi phục ở màn đăng nhập — dùng xong, trang cấp một mã MỚI để cất tiếp. Mất cả mã khôi phục thì đặt lại qua SSH theo file HUONG-DAN-RESET-MAT-KHAU.md trong gói.</li>
+        <li><strong>Mật khẩu admin:</strong> bản cài mới đăng nhập lần đầu bằng tên <code>admin</code> và mật khẩu mặc định <code>admin123</code> (hoặc mật khẩu ban đầu do bản cài đặt sẵn, nếu có) — trang sẽ BẮT BUỘC đổi mật khẩu ngay ở lần đăng nhập đầu, chưa đổi xong thì chưa vào được trang chính; đổi xong trang hiện mã khôi phục một lần để cất. Sau đó đổi mật khẩu bất cứ lúc nào trong mục Tài khoản quản trị. Quên mật khẩu thì dùng mã khôi phục ở màn đăng nhập — dùng xong, trang cấp một mã MỚI để cất tiếp. Mất cả mã khôi phục thì đặt lại qua SSH theo file HUONG-DAN-RESET-MAT-KHAU.md trong gói.</li>
         <li><strong>TOTP:</strong> ghi danh trong trang (mục Tài khoản quản trị) để các thao tác nhạy cảm dùng mã 6 số trong ứng dụng xác thực thay cho mật khẩu. Tắt TOTP thì xác thực lại quay về dùng mật khẩu.</li>
         <li><strong>Cấu hình vận hành:</strong> mỗi ô đều có ghi chú dễ hiểu ngay bên dưới — đọc ghi chú trước khi đổi giá trị.</li>
         <li><strong>Nhật ký &amp; Audit:</strong> audit ghi lại mọi thao tác thay đổi trên trang; nếu thao tác do agent được uỷ quyền thực hiện, bản ghi kèm theo id của grant đó.</li>
@@ -298,12 +310,48 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":
 $("login-form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   try {
-    await api("POST", "/api/login", { password: $("login-token").value });
+    const data = await api("POST", "/api/login", { password: $("login-token").value });
     grantToken = null;
-    $("login-box").classList.add("hidden"); $("app").classList.remove("hidden");
+    $("login-box").classList.add("hidden");
+    if (data.must_change_password) {
+      // First boot: the server locks every other endpoint until the
+      // initial password is replaced - show ONLY the change screen.
+      $("force-change-box").classList.remove("hidden");
+      note("Đăng nhập lần đầu: hãy đặt mật khẩu mới để tiếp tục.");
+      return;
+    }
+    $("app").classList.remove("hidden");
     note("Đã đăng nhập quản trị."); refreshAll();
   } catch (e) { note(e.message, true); }
 });
+$("fc-change-btn").onclick = async () => {
+  const pw = $("fc-new").value, pw2 = $("fc-new2").value;
+  if (pw.length < 8) { note("Mật khẩu mới phải có ít nhất 8 ký tự.", true); return; }
+  if (pw !== pw2) { note("Hai lần nhập mật khẩu mới không giống nhau.", true); return; }
+  try {
+    const data = await api("POST", "/api/change-password", { new_password: pw });
+    $("fc-new").value = ""; $("fc-new2").value = "";
+    if (data.recovery_code) {
+      // Show the one-time recovery code and wait for the admin to
+      // confirm it is stored before entering the app.
+      $("fc-issued").innerHTML =
+        `<b>Mã khôi phục của bạn (chỉ hiện lần này — hãy cất ngay):</b> <code>${esc(data.recovery_code)}</code>` +
+        `<br><span class="muted">Quên mật khẩu thì dùng mã này ở màn đăng nhập để đặt lại.</span>`;
+      $("fc-enter-btn").classList.remove("hidden");
+      note("Đã đổi mật khẩu. Hãy cất mã khôi phục rồi bấm nút bên dưới để vào trang quản trị.");
+    } else {
+      enterAppAfterForcedChange();
+    }
+  } catch (e) { note(e.message, true); }
+};
+$("fc-enter-btn").onclick = () => enterAppAfterForcedChange();
+function enterAppAfterForcedChange() {
+  $("force-change-box").classList.add("hidden");
+  $("fc-issued").innerHTML = "";
+  $("app").classList.remove("hidden");
+  note("Đã đổi mật khẩu. Các phiên đăng nhập khác đã bị huỷ.");
+  refreshAll();
+}
 $("logout-btn").onclick = async () => {
   try { await api("POST", "/api/logout"); } catch (e) { /* session may already be gone */ }
   grantToken = null; grantScope = null;
