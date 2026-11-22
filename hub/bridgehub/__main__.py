@@ -35,6 +35,20 @@ def _start_integrated_admin(config, runtime, hub):
     # Rebuild the filter once with the gate attached (counts are still 0).
     hub._rebuild()
 
+    # API agents (issue #22): executed inside this process by the
+    # ApiExecutor, driven off the hub's enqueue hook. The executor
+    # reads the same registry dir the admin page writes.
+    from hub_integration.api_agents import ApiAgentsStore as HubApiAgentsStore
+    from hub_integration.api_executor import ApiExecutor
+
+    hub.api_executor = ApiExecutor(
+        hub,
+        HubApiAgentsStore(config.registry_dir),
+        agents_provider=lambda: watcher.agents,
+        laws_path=os.path.join(config.registry_dir, "laws.json"),
+    )
+    hub.api_delivery_hook = hub.api_executor.schedule
+
     from hub_admin.api import serve as admin_serve
     from hub_admin.app import build_app
 

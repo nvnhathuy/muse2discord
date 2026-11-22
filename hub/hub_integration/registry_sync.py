@@ -53,6 +53,9 @@ class HubAgent:
     receive_deadline: Optional[float]
     enabled: bool
     seat_type: str
+    # Execution model (issue #22): "api" agents are executed by the
+    # hub itself; everything else is an SSH agent with its own runner.
+    kind: str = "ssh"
 
 
 @dataclass(frozen=True)
@@ -92,6 +95,11 @@ class RegistryView:
     def agents(self) -> Dict[str, HubAgent]:
         out: Dict[str, HubAgent] = {}
         for p in self._registry.list_agents():
+            # Profiles written before the kind field existed carry no
+            # kind attribute value beyond the registry's derivation;
+            # fall back to the seat axis so this side works either way.
+            kind = getattr(p, "kind", None) or (
+                "api" if p.seat_type == "api" else "ssh")
             out[p.key] = HubAgent(
                 key=p.key,
                 bot_id=int(p.bot_id) if str(p.bot_id).isdigit() else 0,
@@ -101,6 +109,7 @@ class RegistryView:
                 receive_deadline=float(p.receive_deadline) if p.receive_deadline else None,
                 enabled=p.enabled,
                 seat_type=p.seat_type,
+                kind=kind,
             )
         return out
 
@@ -116,6 +125,7 @@ class RegistryView:
                 "receive_deadline": agent.receive_deadline,
                 "enabled": agent.enabled,
                 "seat_type": agent.seat_type,
+                "kind": agent.kind,
                 "token_hash": hashlib.sha256(agent.token.encode()).hexdigest() if agent.token else "",
             }, sort_keys=True)
             fp[key] = hashlib.sha256(material.encode()).hexdigest()
@@ -151,8 +161,8 @@ class RegistryWatcher:
                 events.append(RegistryEvent("token_changed", key))
             if old.enabled != new.enabled:
                 events.append(RegistryEvent("enabled_changed", key, enabled=new.enabled))
-            if (old.bot_id, old.display_name, old.call_tokens, old.receive_deadline, old.seat_type) != \
-               (new.bot_id, new.display_name, new.call_tokens, new.receive_deadline, new.seat_type):
+            if (old.bot_id, old.display_name, old.call_tokens, old.receive_deadline, old.seat_type, old.kind) != \
+               (new.bot_id, new.display_name, new.call_tokens, new.receive_deadline, new.seat_type, new.kind):
                 events.append(RegistryEvent("profile_changed", key))
         self._agents, self._fp = new_agents, new_fp
         return events
