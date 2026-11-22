@@ -154,14 +154,30 @@ Bạn cần:
 
 1. **Một máy chủ Linux** như trên — đây là thành phần duy nhất bắt
    buộc phía máy chủ.
-2. **Mạng**: máy của từng agent phải SSH được tới máy chủ — dùng LAN
-   nếu ở cùng mạng, hoặc **Tailscale** nếu agent ở ngoài (cài Tailscale
-   trên máy chủ và máy của từng agent, đăng nhập cùng một tailnet,
-   kiểm tra `ssh <user>@<HOST_IP>` thông trước khi làm tiếp).
+2. **Mạng**: máy của từng agent phải SSH được tới máy chủ — LAN chỉ
+   đủ khi mọi agent ở cùng mạng với máy chủ; có agent ở ngoài LAN thì
+   bắt buộc có VPN theo tiểu mục *Điều kiện mạng — Tailscale* ngay
+   dưới đây.
 3. **Tài khoản Discord** và một server (guild) có một kênh phòng cho
    đội agent.
 4. **Một ứng dụng bot Discord cho mỗi agent** (xem bước 2 khi triển
    khai).
+
+### Điều kiện mạng — Tailscale
+
+- **Mọi agent ở cùng mạng LAN với máy chủ:** không cần gì thêm — dùng
+  địa chỉ LAN của máy chủ cho mọi kết nối.
+- **Có BẤT KỲ agent nào ở ngoài mạng LAN** (máy đặt ở nơi khác, VPS,
+  nhà riêng của thành viên...): **bắt buộc** có **Tailscale** (hoặc
+  một VPN tương đương). Cài Tailscale trên máy chủ — và trên máy điều
+  phối nếu dùng bản tách hai máy — cùng trên máy của từng agent ở xa;
+  tất cả phải ở cùng một tailnet và đã đăng nhập/duyệt máy xong.
+- **Khi đi qua Tailscale**, địa chỉ dùng cho lính canh SSH vào và cho
+  biến `HUB_KEYDROP_TARGET` là **địa chỉ Tailscale của máy đích**
+  (IP dạng `100.x.y.z` hoặc tên MagicDNS) — **không** dùng IP LAN.
+- **Không** mở cổng SSH của máy chủ ra Internet để thay cho VPN.
+- Trước khi triển khai tiếp, kiểm tra `ssh <user>@<địa chỉ đích>`
+  (LAN hoặc Tailscale tuỳ trường hợp) thông từ máy của agent.
 
 **Trường hợp tách hai máy (tuỳ chọn):** nếu hub chạy trên thiết bị quản
 qua Portainer (ví dụ NAS) không cho agent SSH trực tiếp vào thiết bị
@@ -481,6 +497,15 @@ with Docker and SSH; only when the hub lives on a Portainer-managed
 device (e.g. a NAS) that agents cannot SSH into directly do you add a
 separate coordination machine as the single SSH door, running a
 Portainer bridge instead of plain `docker exec`.
+
+**Networking condition:** if every agent is on the same LAN as the
+host, nothing extra is needed; if **any** agent is outside that LAN,
+Tailscale (or an equivalent VPN) is **required** — install it on the
+host (and on the coordination machine, if split) and on each remote
+agent's machine, all joined to the same tailnet. Over Tailscale, use
+the Tailscale IP (`100.x.y.z`) or MagicDNS name — not the LAN IP —
+for sentinel SSH connections and for `HUB_KEYDROP_TARGET`, and never
+expose the host's SSH port to the Internet instead of using a VPN.
 
 The admin page (single page, password login) provides: hot-reloadable
 agent management (add / edit / hard delete — no container restart),
