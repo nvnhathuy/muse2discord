@@ -9,7 +9,9 @@ Identity model:
   Sensitive operations (spec 6) additionally need a fresh step-up proof
   in the X-Admin-Reauth header.
 - agent: Bearer token from a temporary grant (spec 5b). Scope decides
-  what is allowed; SENSITIVE_OPS are rejected for grants at any scope.
+  what is allowed: read < operate < full. A "full" grant is
+  admin-equivalent (owner decision 2026-11-22), sensitive ops included;
+  grant ISSUE/REVOKE stays admin-only even then.
 Every mutating call is audit-logged, with grant_id when an agent acts.
 """
 
@@ -98,8 +100,14 @@ class AdminApp:
             raise PermissionError(f"operation {op!r} not allowed for this identity")
 
     def require_step_up(self, identity: Identity, headers) -> None:
-        if identity.kind != "admin":
-            raise PermissionError("sensitive operations are admin-only")
+        if identity.kind == "agent":
+            # A "full" grant IS the admin's step-up decision, taken when
+            # the grant was issued (owner decision 2026-11-22 09:50):
+            # the holder acts for the admin, sensitive ops included.
+            # authorize() has already rejected non-full grants.
+            if identity.grant is not None and identity.grant.scope == "full":
+                return
+            raise PermissionError("sensitive operations need admin or a full temporary grant")
         if not self.auth.verify_step_up(headers.get("X-Admin-Reauth", "")):
             raise PermissionError("sensitive operation requires fresh re-authentication")
 
@@ -115,7 +123,15 @@ class AdminApp:
             row.update(self.delivery.probe(profile.key))
             row["online"] = profile.key in (status.get("online_bots") or [])
             agents.append(row)
-        return 200, {"hub": status, "agents": agents}
+        return 200, {
+            "hub": status,
+            "agents": agents,
+            "identity": {
+                "kind": identity.kind,
+                "name": identity.name,
+                "scope": identity.grant.scope if identity.grant else None,
+            },
+        }
 
     def list_agents(self, identity: Identity):
         self.authorize(identity, "view")

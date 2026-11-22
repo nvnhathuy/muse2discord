@@ -9,7 +9,7 @@ không triển khai lên hub đang chạy).
 ## Đã làm
 
 - Toàn bộ gói `hub_admin/` (Python stdlib thuần, không thêm dependency)
-  + trang `static/admin.html` một file + 28 test (`tests/`), chạy xanh
+  + trang `static/admin.html` một file + 29 test (`tests/`), chạy xanh
   bằng `python3 -m unittest discover -s tests` trên máy người dựng, kèm smoke
   test chạy thật `python3 -m hub_admin.app` (seed từ env mẫu, đăng nhập,
   overview, trang 200).
@@ -44,11 +44,19 @@ không triển khai lên hub đang chạy).
 4. **Xác thực lại (mục 6)**: bản này dùng cơ chế cắm được — mặc định là
    nhập lại token quản trị qua header `X-Admin-Reauth`. Khi triển khai
    thật, thay verifier trong `auth.py` bằng passkey/TOTP, API không đổi.
-5. **Phạm vi quyền tạm**: grant gắn với agent nắm giữ (để audit), phạm
-   vi read/operate áp cho thao tác trên bề mặt quản trị; thao tác nhạy
-   cảm bị chặn cứng trong `grants.SENSITIVE_OPS` ở tầng mô hình, không
-   chỉ ở API. Nếu đại ca muốn siết thêm "operate chỉ được đụng agent
-   khác, không đụng chính mình" thì thêm điều kiện ở `api.authorize`.
+5. **Phạm vi quyền tạm (đã sửa theo chốt 09:50 + 09:51 ngày 22/11)**:
+   có 3 mức read / operate / full. Mức **full là toàn quyền như admin,
+   gồm cả thao tác nhạy cảm** ở mục 6 (bản đầu khoá cứng việc này —
+   đã GỠ theo lệnh đại ca); người nắm quyền full làm việc nhạy cảm
+   không cần header xác thực lại, vì quyết định cấp chính là bước uỷ
+   quyền của admin, và mọi thao tác vẫn ghi audit theo grant id. Ngoại
+   lệ giữ cứng: **cấp/liệt kê/thu hồi grant chỉ phiên admin làm được**
+   — `issue_grant`/`revoke_grant`/`list_grants` kiểm tra
+   `identity.kind == "admin"`, không chấp nhận xác thực bằng grant ở
+   bất kỳ mức nào, nên không có uỷ quyền chuỗi hay tự gia hạn. Test đã
+   đảo chiều tương ứng: `test_sensitive_ops_need_full_grant` (tầng mô
+   hình) và `test_full_grant_is_admin_equivalent_but_cannot_issue_grants`
+   (tầng API, kiểm cả 2 mặt).
 
 ## Kỷ luật đã tuân
 

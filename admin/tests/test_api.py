@@ -140,7 +140,7 @@ class ApiTests(unittest.TestCase):
         status, _ = agent_client.call("POST", "/api/agents/gamma/pause",
                                       {"reason": "ho tro ky thuat"}, bearer=operate_token)
         self.assertEqual(status, 200)
-        # sensitive ops stay forbidden for grants, even operate scope
+        # sensitive ops stay forbidden for operate grants
         status, _ = agent_client.call("DELETE", "/api/agents/gamma",
                                       {"confirm_name": "gamma"}, bearer=operate_token,
                                       headers={"X-Admin-Reauth": ADMIN_TOKEN})
@@ -156,6 +156,47 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         status, _ = agent_client.call("GET", "/api/overview", bearer=operate_token)
         self.assertEqual(status, 401)
+
+    def test_full_grant_is_admin_equivalent_but_cannot_issue_grants(self):
+        # Owner decisions 2026-11-22 09:50 + 09:51: a full temporary
+        # grant does EVERYTHING the admin can (sensitive ops included)
+        # EXCEPT grant administration itself - issuing stays admin-only,
+        # no chained delegation, no self-renewal.
+        self.client.call("POST", "/api/agents", {"key": "eps", "display_name": "Epsilon"})
+        status, data = self.client.call("POST", "/api/grants", {
+            "agent_key": "eps", "scope": "full", "reason": "thay admin xu ly su co",
+            "ttl_seconds": 600})
+        self.assertEqual(status, 201)
+        full_token = data["grant"]["token"]
+        full_id = data["grant"]["id"]
+        agent_client = Client(self.port)
+        # sensitive op 1: set bot token (no admin step-up header needed)
+        status, _ = agent_client.call("POST", "/api/agents/eps/token",
+                                      {"bot_token": "tok-by-full-grant"}, bearer=full_token)
+        self.assertEqual(status, 200)
+        # sensitive op 2: edit ops config
+        status, data = agent_client.call("PATCH", "/api/ops-config",
+                                         {"changes": {"redelivery_max": 6}}, bearer=full_token)
+        self.assertEqual(status, 200)
+        self.assertEqual(data["ops_config"]["redelivery_max"], 6)
+        # the ONE exception: grant administration is admin-only
+        status, _ = agent_client.call("POST", "/api/grants", {
+            "agent_key": "eps", "scope": "full", "reason": "tu cap", "ttl_seconds": 600},
+            bearer=full_token)
+        self.assertEqual(status, 403)
+        status, _ = agent_client.call("GET", "/api/grants", bearer=full_token)
+        self.assertEqual(status, 403)
+        status, _ = agent_client.call("DELETE", f"/api/grants/{full_id}", bearer=full_token)
+        self.assertEqual(status, 403)
+        # sensitive op 3: hard delete with typed confirmation
+        status, _ = agent_client.call("DELETE", "/api/agents/eps",
+                                      {"confirm_name": "eps"}, bearer=full_token)
+        self.assertEqual(status, 200)
+        # actions under the grant are audited under the agent + grant id
+        status, data = self.client.call("GET", "/api/audit?agent=eps")
+        grant_actions = {e["action"] for e in data["entries"] if e["grant_id"] == full_id}
+        self.assertIn("set_bot_token", grant_actions)
+        self.assertIn("delete_agent", grant_actions)
 
     def test_sensitive_ops_need_step_up(self):
         self.client.call("POST", "/api/agents", {"key": "delta", "display_name": "Delta"})

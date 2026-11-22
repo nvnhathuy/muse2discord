@@ -145,13 +145,19 @@ class GrantTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.grants.issue("alpha", "admin", "x", ttl_seconds=60)
 
-    def test_sensitive_ops_never_grantable(self):
+    def test_sensitive_ops_need_full_grant(self):
+        # read/operate grants never reach sensitive ops (spec 6)
         for op in SENSITIVE_OPS:
             self.assertFalse(scope_allows("operate", op), op)
             self.assertFalse(scope_allows("read", op), op)
+        # a still-valid FULL temporary grant is admin-equivalent
+        # (owner decision 2026-11-22 09:50), sensitive ops included
+        for op in SENSITIVE_OPS:
+            self.assertTrue(scope_allows("full", op), op)
         self.assertTrue(scope_allows("read", "view"))
         self.assertFalse(scope_allows("read", "pause_agent"))
         self.assertTrue(scope_allows("operate", "pause_agent"))
+        self.assertTrue(scope_allows("full", "view"))
 
 
 class OpsConfigTests(unittest.TestCase):

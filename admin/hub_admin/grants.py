@@ -5,8 +5,12 @@ principal) may issue a temporary grant: a one-off token, scoped and
 time-boxed, revocable at any moment with immediate effect.
 
 Hard limits baked into the model:
-- scope is only "read" or "operate"; the sensitive operations in
-  SENSITIVE_OPS can never be granted to an agent token, at any scope.
+- scopes are "read", "operate" and "full". A "full" grant is
+  admin-equivalent (owner decision, 2026-11-22 09:50): the holder acts
+  for the admin during an incident, INCLUDING sensitive operations.
+  "read"/"operate" grants still never reach SENSITIVE_OPS.
+- only the admin principal issues or revokes grants - even a "full"
+  grant holder cannot mint new grants (no self-perpetuating access).
 - every grant has an expiry (default 1 hour, maximum 24 hours).
 - the token plaintext is returned exactly once, at issue time; only
   its SHA-256 hash is stored.
@@ -26,11 +30,12 @@ import uuid
 from dataclasses import asdict, dataclass
 from typing import Dict, List, Optional
 
-SCOPES = ("read", "operate")
+SCOPES = ("read", "operate", "full")
 DEFAULT_TTL = 3600          # 1 hour
 MAX_TTL = 24 * 3600         # 24 hours
 
-# Spec section 6: sensitive operations. Admin principal only, forever.
+# Spec section 6: sensitive operations. Reachable by the admin
+# principal and by holders of a still-valid "full" grant only.
 SENSITIVE_OPS = {
     "delete_agent",
     "set_bot_token",
@@ -46,8 +51,10 @@ READ_OPS = {"view"}
 
 
 def scope_allows(scope: str, op: str) -> bool:
+    if scope == "full":
+        return True  # admin-equivalent temporary grant (2026-11-22 decision)
     if op in SENSITIVE_OPS:
-        return False  # no grant, at any scope, ever
+        return False  # read/operate grants never reach sensitive ops
     if op in READ_OPS:
         return scope in SCOPES
     if op in OPERATE_OPS:

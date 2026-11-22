@@ -12,9 +12,12 @@ hub, đã chốt đủ 3 quyết định ở mục 10 ngày 22/11/2026):
 - **Trang quản trị địa chỉ riêng** (mục 5): một trang duy nhất — tổng
   quan, agent, hàng chờ, quyền tạm, cấu hình vận hành, nhật ký.
 - **Quyền tạm thời cho agent** (mục 5b): agent không có quyền thường
-  trực; quản trị viên cấp token tạm theo phạm vi (read / operate) và
-  thời hạn (mặc định 60 phút, tối đa 24 giờ), thu hồi hiệu lực ngay.
-  Thao tác nhạy cảm (mục 6) không bao giờ cấp tạm được.
+  trực; quản trị viên cấp token tạm theo phạm vi (read / operate /
+  full) và thời hạn (mặc định 60 phút, tối đa 24 giờ), thu hồi hiệu lực
+  ngay. Phạm vi **full = toàn quyền như admin, kể cả thao tác nhạy cảm**
+  (chốt của đại ca 22/11 09:50 — để agent thay admin xử lý sự cố);
+  ngoại lệ duy nhất: **cấp/thu hồi quyền tạm là quyền riêng của admin**,
+  kể cả người đang nắm quyền full cũng không tự cấp được (chốt 09:51).
 - **Token bot không bao giờ hiển thị**: chỉ "đã có / chưa có + độ dài +
   thời điểm cấp", giá trị nằm ở kho bí mật riêng (file 0600).
 - **Mọi thao tác ghi audit** append-only, gắn grant id khi agent làm
@@ -33,7 +36,7 @@ tính: `sample/sample.env`.
 ## Kiểm thử
 
 ```bash
-python3 -m unittest discover -s tests -v   # 28 test, chỉ dùng stdlib
+python3 -m unittest discover -s tests -v   # 29 test, chỉ dùng stdlib
 ```
 
 ## Cấu trúc

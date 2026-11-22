@@ -66,11 +66,12 @@
       <select id="grant-scope">
         <option value="read">Chỉ xem (read)</option>
         <option value="operate">Thao tác thường (operate)</option>
+        <option value="full">Toàn quyền như admin (full) — gồm cả việc nhạy cảm</option>
       </select></label>
     <label>Thời hạn (phút) <input id="grant-ttl" type="number" value="60" min="1" max="1440"></label>
     <label>Lý do <input id="grant-reason" type="text" size="40"></label>
     <button id="grant-issue-btn">Cấp quyền</button>
-    <p class="muted">Token tạm chỉ hiện MỘT lần sau khi cấp. Thao tác nhạy cảm (xoá, thay token bot, reset cursor, sửa cấu hình) không bao giờ cấp tạm được.</p>
+    <p class="muted">Token tạm chỉ hiện MỘT lần sau khi cấp. Chỉ quản trị viên mới cấp/thu hồi được quyền. Phạm vi “full” = toàn quyền như admin kể cả việc nhạy cảm (xoá, thay token bot, reset cursor, sửa cấu hình) — chỉ cấp khi cần thay admin xử lý sự cố.</p>
     <div id="grant-issued"></div>
   </section>
 
@@ -116,6 +117,8 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
 let grantToken = null; // when logged in via a temporary grant
+let grantScope = null; // scope of that grant, from /api/overview
+const canSensitive = () => !grantToken || grantScope === "full";
 
 function note(text, isError) {
   $("msg").textContent = text;
@@ -131,6 +134,7 @@ async function api(method, path, body, headers) {
   return data;
 }
 function stepUpHeaders() {
+  if (grantToken) return {}; // a full grant is itself the admin's delegation
   const token = prompt("Thao tác nhạy cảm — nhập lại token quản trị để xác thực:");
   return token ? { "X-Admin-Reauth": token } : null;
 }
@@ -148,11 +152,13 @@ $("login-btn").onclick = async () => {
 $("login-grant-btn").onclick = async () => {
   grantToken = $("login-token").value.trim();
   try {
-    await api("GET", "/api/overview");
+    const data = await api("GET", "/api/overview");
+    grantScope = data.identity ? data.identity.scope : null;
     $("login-box").classList.add("hidden"); $("app").classList.remove("hidden");
-    $("grants-card").classList.add("hidden"); $("ops-card").classList.add("hidden");
-    note("Đã vào bằng quyền tạm (phạm vi bị giới hạn)."); refreshAll();
-  } catch (e) { grantToken = null; note(e.message, true); }
+    $("grants-card").classList.add("hidden"); // grant admin stays admin-only
+    if (grantScope !== "full") $("ops-card").classList.add("hidden");
+    note(`Đã vào bằng quyền tạm (phạm vi: ${grantScope}).`); refreshAll();
+  } catch (e) { grantToken = null; grantScope = null; note(e.message, true); }
 };
 
 // ---------------------------------------------------------------- agents
@@ -183,7 +189,7 @@ async function refreshAgents() {
     else mk("Mở lại", () => resumeAgent(a));
     mk("Sửa", () => openAgentDialog(a));
     mk("Hàng chờ", () => { $("queue-agent").value = a.key; loadQueue(); });
-    if (!grantToken) {
+    if (canSensitive()) {
       mk("Thay token", () => setToken(a));
       mk("Xoá", () => deleteAgent(a));
     }
@@ -278,7 +284,7 @@ async function loadQueue() {
       `#${esc(i.message_id)} · ${esc(i.author || "?")} · giao ${i.deliveries} lần · ` +
       (i.leased ? `đang lease (còn ${i.lease_seconds_left}s)` : "chưa lease") +
       ` <button data-rel="${esc(i.message_id)}">Giải phóng lease</button>` +
-      (grantToken ? "" : ` <button data-ack="${esc(i.message_id)}">Ack hộ (nhạy cảm)</button>`)
+      (canSensitive() ? ` <button data-ack="${esc(i.message_id)}">Ack hộ (nhạy cảm)</button>` : "")
     ).join("<br>");
     $("queue-box").querySelectorAll("[data-rel]").forEach((b) => b.onclick = async () => {
       await api("POST", `/api/agents/${key}/queue/release`, { message_id: b.dataset.rel }); loadQueue();
@@ -320,7 +326,7 @@ $("grant-issue-btn").onclick = async () => {
 
 // ---------------------------------------------------------------- ops
 async function refreshOps() {
-  if (grantToken) return;
+  if (grantToken && grantScope !== "full") return;
   const data = await api("GET", "/api/ops-config");
   $("ops-box").innerHTML = Object.entries(data.ops_config).map(([k, v]) =>
     `<label>${esc(k)} <input data-op="${esc(k)}" value="${esc(Array.isArray(v) ? v.join(",") : v)}" size="18"></label>`).join("");
