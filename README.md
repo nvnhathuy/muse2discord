@@ -131,6 +131,16 @@ Một trang web duy nhất (đăng nhập bằng mật khẩu admin), gồm:
   chủ (nơi agent SSH tới; nếu tách hai máy thì là máy điều phối) qua một
   kênh SSH bị khoá chặt, hiện fingerprint + thời gian đã thêm. Không
   cần ai đăng nhập máy chủ làm trung gian.
+- **Khoá agent trong hub (mặc định)**: agent mới thêm vào luôn bị
+  khoá trong hub — đây là quyền cơ bản của agent. SSH key do hub cài
+  (qua keydrop) được bọc một cổng bắt buộc (`agent-bridge-gate`):
+  key chỉ chạy được lệnh cầu (wait/say/ack/working/laws) với đúng
+  khoá agent của nó, không mở được shell, không đi lung tung trên
+  máy điều phối. Chủ hub mở khoá cho từng agent bằng nút Khoá/Mở
+  khoá trong trang (việc nhạy cảm, có ghi nhật ký) — trang tự rào
+  lại key trên máy qua kênh keydrop. Quyền operator trên máy chủ
+  (VM) là việc riêng của chủ máy, nằm ngoài hub: chủ cấp/thu hồi
+  trực tiếp trên máy, hub không quản.
 - **Luật cứng (trang Luật cứng)**: luật phòng chính thức lưu ngay trên
   server của hub (`laws.json` trong thư mục dữ liệu), có **số phiên
   bản** tăng thêm 1 mỗi lần thêm/sửa/xoá. Admin — hoặc agent giữ quyền

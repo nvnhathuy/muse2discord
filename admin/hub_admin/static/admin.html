@@ -214,7 +214,7 @@
     <label>Hạn nhận/trả lời (giây, trống = mặc định, tối thiểu 180) <input id="f-deadline" type="number" min="180"></label>
     <label>Ghi chú <input id="f-notes" type="text" size="44"></label>
     <label id="f-token-row">Token bot (chỉ khi tạo mới / thay token) <input id="f-token" type="password" size="44" autocomplete="new-password"></label>
-    <p class="muted">Agent mới luôn bắt đầu ở trạng thái TẠM DỪNG — bấm Mở lại khi sẵn sàng.</p>
+    <p class="muted">Agent mới luôn bắt đầu ở trạng thái TẠM DỪNG và bị KHOÁ TRONG HUB (khoá SSH hub cài cho agent chỉ chạy được lệnh cầu của chính agent) — bấm Mở lại / Mở khoá khi sẵn sàng.</p>
     <button id="agent-save-btn" value="save">Lưu</button>
     <button value="cancel">Huỷ</button>
   </form>
@@ -506,7 +506,7 @@ async function refreshAgents() {
   for (const a of data.agents) {
     const tr = document.createElement("tr");
     tr.innerHTML =
-      `<td><b>${esc(a.display_name)}</b><br><span class="muted">${esc(a.key)} · ${esc(a.role || "")}</span></td>` +
+      `<td><b>${esc(a.display_name)}</b><br><span class="muted">${esc(a.key)} · ${esc(a.role || "")} · ${a.locked ? "khoá trong hub" : "đã mở khoá"}</span></td>` +
       `<td>${a.enabled ? '<span class="on">Đang bật</span>' : '<span class="off">Tạm dừng</span>' +
         (a.pause_reason ? `<br><span class="muted">${esc(a.pause_reason)}</span>` : "")}</td>` +
       `<td>${a.online ? '<span class="on">online</span>' : '<span class="off">offline</span>'}</td>` +
@@ -524,6 +524,7 @@ async function refreshAgents() {
     if (canSensitive()) {
       mk("Thay token", () => setToken(a));
       mk("SSH key", () => openSshKeyDialog(a));
+      mk(a.locked ? "Mở khoá" : "Khoá", () => toggleLock(a));
       mk("Xoá", () => deleteAgent(a));
     }
     tbody.appendChild(tr);
@@ -538,6 +539,12 @@ async function pauseAgent(a) {
 }
 async function resumeAgent(a) {
   try { await api("POST", `/api/agents/${a.key}/resume`, {}); note(`Đã mở lại ${a.display_name}.`); refreshAgents(); }
+  catch (e) { note(e.message, true); }
+}
+async function toggleLock(a) {
+  const headers = stepUpHeaders(); if (!headers) return;
+  const target = !a.locked;
+  try { await api("POST", `/api/agents/${a.key}/lock`, { locked: target }, headers); note(target ? `Đã khoá ${a.display_name} trong hub.` : `Đã mở khoá cho ${a.display_name}.`); refreshAgents(); }
   catch (e) { note(e.message, true); }
 }
 async function setToken(a) {
@@ -573,8 +580,11 @@ function buildConnectPrompt(a, roster) {
 - Từ khoá gọi bạn: ${callTokens}
 - Danh sách cả phòng (khoá — tên):
 ${rosterLines}
+- Trạng thái khoá trong hub: ${a.locked === false ? "đã mở khoá" : "bị khoá (mặc định của agent mới)"}
 
 Cách kết nối (kiến trúc bắt buộc): hub là trung tâm duy nhất; bạn KHÔNG tự vào Discord đọc tin. Tin được hub đẩy tới bạn qua lính canh: một script vòng lặp chạy trên máy của bạn, gọi lệnh \`bridge wait --agent ${a.key} --timeout 30\` bên trong container hub (đường vào: SSH tới VM điều phối của đội rồi exec vào container hub qua cầu Portainer — nếu máy bạn chưa có bộ dụng cụ này, hãy báo chủ phòng cấp gói lính canh mẫu chuẩn thay vì tự chế đường khác). Nhận tin từ wait → xử lý → trả lời bằng \`bridge say --agent ${a.key} --reply-to <id tin>\` (chỉ trả lời được tin đã được hub giao cho bạn; trả lời nhiều phần dùng --part, xong việc dùng --final; đã --final thì không say thêm).
+
+${a.locked === false ? "Chủ hub đã mở khoá cho bạn: khoá SSH của bạn vào VM điều phối không bị giới hạn ở lệnh cầu." : "Bạn đang bị khoá trong hub (mặc định của mọi agent mới): khoá SSH do hub cài cho bạn chỉ chạy được lệnh cầu (wait/say/ack/working/laws) với đúng khoá agent của bạn — không mở được shell, không đi lung tung trên VM điều phối. Đây là quyền cơ bản của agent; chỉ chủ hub mới mở khoá được."}
 
 Dùng NGUYÊN code mẫu lính canh dưới đây, chỉ thay khoá agent là của bạn — không tự viết lại lính canh.
 

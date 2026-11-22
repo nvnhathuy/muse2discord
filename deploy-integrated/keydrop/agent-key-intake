@@ -3,17 +3,25 @@
 # VM, forced by the command= restriction in keydrop's authorized_keys
 # (the hub's SSH key can ONLY run this script, nothing else).
 #
-# Protocol: exactly 2 lines on stdin, at most ~2KB total:
+# Protocol (stdin, at most ~2KB total):
 #   line 1: agent key        (^[a-z0-9_-]{1,32}$)
 #   line 2: ssh-ed25519 public key; an optional trailing comment is
 #           DISCARDED - the system assigns its own comment later.
-# On success appends "<agentkey>\tssh-ed25519 <blob>" to the pending
-# file and exits 0. On ANY format error: exit non-zero, write nothing.
+#   line 3 (optional, key submissions only): install mode -
+#           "fenced" (default when absent) or "open".
+# A mode-only submission replaces line 2 with "mode:fenced" or
+# "mode:open" and has NO line 3: it asks the install step to
+# re-fence the agent's already-installed key after a lock toggle.
+# On success appends one line to the pending file:
+#   key:  "<agentkey>\tssh-ed25519 <blob>\t<mode>"
+#   mode: "<agentkey>\tmode\t<mode>"
+# On ANY format error: exit non-zero, write nothing.
 set -u
 
 PENDING_FILE="${KEYDROP_PENDING_FILE:-/var/lib/keydrop/pending.tsv}"
 AGENT_RE='^[a-z0-9_-]{1,32}$'
 KEY_RE='^ssh-ed25519 ([A-Za-z0-9+/]{40,}={0,3})( .*)?$'
+MODE_RE='^(fenced|open)$'
 
 fail() { echo "agent-key-intake: $1" >&2; exit 1; }
 
@@ -23,21 +31,34 @@ raw="$(head -c 2048)" || fail "cannot read stdin"
 # Split into lines ($() has already stripped trailing newlines).
 agent_key="${raw%%$'\n'*}"
 rest="${raw#*$'\n'}"
-[ "$rest" != "$raw" ] || fail "expected exactly 2 lines"
-pub_line="${rest%%$'\n'*}"
-extra="${rest#*$'\n'}"
-if [ "$extra" != "$rest" ] && [ -n "${extra//[[:space:]]/}" ]; then
-  fail "unexpected extra data after line 2"
+[ "$rest" != "$raw" ] || fail "expected at least 2 lines"
+line2="${rest%%$'\n'*}"
+line3=""
+if [ "$rest" != "$line2" ]; then
+  line3="${rest#*$'\n'}"
+  case "$line3" in *$'\n'*) fail "unexpected extra data after line 3";; esac
 fi
 
 [[ $agent_key =~ $AGENT_RE ]] || fail "bad agent key"
-if [[ $pub_line =~ $KEY_RE ]]; then
+mkdir -p "$(dirname "$PENDING_FILE")" || fail "cannot create pending dir"
+
+if [[ $line2 =~ ^mode:(fenced|open)$ ]]; then
+  [ -z "$line3" ] || fail "mode submission takes no line 3"
+  printf '%s\tmode\t%s\n' "$agent_key" "${BASH_REMATCH[1]}" >> "$PENDING_FILE" \
+    || fail "cannot write pending file"
+  exit 0
+fi
+
+if [[ $line2 =~ $KEY_RE ]]; then
   blob="${BASH_REMATCH[1]}"
 else
   fail "bad public key"
 fi
-
-mkdir -p "$(dirname "$PENDING_FILE")" || fail "cannot create pending dir"
-printf '%s\t%s\n' "$agent_key" "ssh-ed25519 $blob" >> "$PENDING_FILE" \
+mode="fenced"
+if [ -n "$line3" ]; then
+  [[ $line3 =~ $MODE_RE ]] || fail "bad mode"
+  mode="$line3"
+fi
+printf '%s\t%s\t%s\n' "$agent_key" "ssh-ed25519 $blob" "$mode" >> "$PENDING_FILE" \
   || fail "cannot write pending file"
 exit 0

@@ -108,7 +108,7 @@ class KeydropClientTests(unittest.TestCase):
         argv, stdin_text = self.calls[0]
         self.assertEqual(argv[0], "ssh")
         self.assertIn("keydrop@vm-placeholder", argv)
-        self.assertEqual(stdin_text, f"kappa\n{line}\n")  # comment stripped
+        self.assertEqual(stdin_text, f"kappa\n{line}\nfenced\n")  # comment stripped; new agents are locked -> fenced
         # hub keypair was generated in the state dir, private key 0600
         key_path = os.path.join(self.tmp, "hub_ssh_key")
         self.assertTrue(os.path.exists(key_path))
@@ -237,9 +237,10 @@ class SshKeyApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         expected_fp = key_fingerprint(line.split()[1])
         self.assertEqual(data["fingerprint"], expected_fp)
-        # the SSH payload was exactly two lines, comment stripped
+        # the SSH payload is agent + key + mode, comment stripped;
+        # a fresh agent is locked by default, so the mode is fenced
         argv, stdin_text = self.ssh_calls[-1]
-        self.assertEqual(stdin_text, f"kappa\n{line}\n")
+        self.assertEqual(stdin_text, f"kappa\n{line}\nfenced\n")
         # registry + overview carry the stamp
         row = self._overview_agent("kappa")
         self.assertEqual(row["ssh_key_fingerprint"], expected_fp)
@@ -302,6 +303,95 @@ class SshKeyApiTests(unittest.TestCase):
         row = self._overview_agent("zeta")
         self.assertEqual(row["ssh_key_fingerprint"], "")
         self.assertIsNone(row["ssh_key_added_at"])
+
+    # --------------------------------------------------------------
+    # agent lock ("khoá trong hub"): locked by default, the toggle
+    # re-fences the installed key through the same keydrop channel.
+    def test_new_agent_locked_by_default(self):
+        self._create("locka")
+        self.assertTrue(self._overview_agent("locka")["locked"])
+
+    def test_lock_requires_auth(self):
+        anon = Client(self.port)
+        status, _ = anon.call("POST", "/api/agents/locka/lock", {"locked": False})
+        self.assertEqual(status, 401)
+
+    def test_lock_toggle_refences_installed_key(self):
+        self._create("lockb")
+        headers = {"X-Admin-Reauth": ADMIN_TOKEN}
+        status, _ = self.client.call("POST", "/api/agents/lockb/ssh-key",
+                                     {"public_key": make_key_line()},
+                                     headers=headers)
+        self.assertEqual(status, 200)
+        # sensitive: the admin session alone is not enough
+        status, _ = self.client.call("POST", "/api/agents/lockb/lock",
+                                     {"locked": False})
+        self.assertEqual(status, 403)
+        # unlock with step-up: a mode-only submission re-fences the key
+        status, data = self.client.call("POST", "/api/agents/lockb/lock",
+                                        {"locked": False}, headers=headers)
+        self.assertEqual(status, 200)
+        self.assertFalse(data["agent"]["locked"])
+        argv, stdin_text = self.ssh_calls[-1]
+        self.assertEqual(stdin_text, "lockb\nmode:open\n")
+        self.assertFalse(self._overview_agent("lockb")["locked"])
+        # lock again -> fenced
+        status, data = self.client.call("POST", "/api/agents/lockb/lock",
+                                        {"locked": True}, headers=headers)
+        self.assertEqual(status, 200)
+        argv, stdin_text = self.ssh_calls[-1]
+        self.assertEqual(stdin_text, "lockb\nmode:fenced\n")
+        self.assertTrue(self._overview_agent("lockb")["locked"])
+        # audited
+        status, data = self.client.call("GET", "/api/audit?agent=lockb")
+        self.assertIn("set_agent_lock", {e["action"] for e in data["entries"]})
+
+    def test_lock_without_key_skips_keydrop(self):
+        self._create("lockc")
+        before = len(self.ssh_calls)
+        status, data = self.client.call(
+            "POST", "/api/agents/lockc/lock", {"locked": False},
+            headers={"X-Admin-Reauth": ADMIN_TOKEN})
+        self.assertEqual(status, 200)
+        self.assertFalse(data["agent"]["locked"])
+        self.assertEqual(len(self.ssh_calls), before)  # nothing shipped
+
+    def test_lock_operate_grant_forbidden(self):
+        self._create("lockd")
+        status, data = self.client.call("POST", "/api/grants", {
+            "agent_key": "lockd", "scope": "operate",
+            "reason": "ho tro", "ttl_seconds": 600})
+        self.assertEqual(status, 201)
+        agent_client = Client(self.port)
+        status, _ = agent_client.call(
+            "POST", "/api/agents/lockd/lock", {"locked": False},
+            bearer=data["grant"]["token"])
+        self.assertEqual(status, 403)  # sensitive: operate never reaches it
+
+    def test_lock_transport_failure_keeps_state(self):
+        self._create("locke")
+        headers = {"X-Admin-Reauth": ADMIN_TOKEN}
+        status, _ = self.client.call("POST", "/api/agents/locke/ssh-key",
+                                     {"public_key": make_key_line()},
+                                     headers=headers)
+        self.assertEqual(status, 200)
+        self.ssh_rc[0] = 1
+        try:
+            status, _ = self.client.call("POST", "/api/agents/locke/lock",
+                                         {"locked": False}, headers=headers)
+        finally:
+            self.ssh_rc[0] = 0
+        self.assertEqual(status, 502)
+        self.assertTrue(self._overview_agent("locke")["locked"])
+
+    def test_page_has_lock_ui(self):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        conn.request("GET", "/")
+        res = conn.getresponse()
+        body = res.read().decode("utf-8")
+        conn.close()
+        self.assertIn("toggleLock", body)
+        self.assertIn("khoá trong hub", body)
 
     def test_page_has_ssh_key_dialog(self):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
