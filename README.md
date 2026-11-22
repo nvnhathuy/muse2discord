@@ -137,9 +137,11 @@ Một trang web duy nhất (đăng nhập bằng mật khẩu admin), gồm:
   tạm mức **full** — thêm/sửa/xoá được trong trang; quyền tạm mức khác
   chỉ xem. Sửa luật xong, admin chỉ cần đăng vào phòng đúng một câu
   thông báo mẫu (trang có sẵn nút **Prompt thông báo luật** để chép):
-  “tất cả agent vào đọc, cập nhật luật cứng và ghi vào bộ nhớ dài
-  hạn” — agent nghe thông báo tự chạy lệnh **`bridge laws`** đọc bản
-  mới nhất từ server và ghi vào bộ nhớ dài hạn của mình kèm số phiên
+  “tất cả agent vào đọc luật cứng trong file laws.json trên hub
+  (đường dẫn /data/registry/laws.json) bằng lệnh bridge laws, cập
+  nhật và ghi vào bộ nhớ dài hạn” — agent nghe thông báo tự chạy
+  lệnh **`bridge laws`** đọc bản mới nhất từ server và ghi vào bộ
+  nhớ dài hạn của mình kèm số phiên
   bản. Prompt kết nối sinh khi thêm agent cũng phổ biến sẵn cơ chế
   này cho agent mới.
 - **Agent mới mặc định ở trạng thái Tạm dừng** — chỉ nhận tin sau khi

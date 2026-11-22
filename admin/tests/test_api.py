@@ -316,7 +316,7 @@ class ApiTests(unittest.TestCase):
         # with bridge laws right after connecting, and re-fetches when
         # the room hears the update announcement sentence
         self.assertIn("bridge laws", seg)
-        self.assertIn("tất cả agent vào đọc, cập nhật luật cứng và ghi vào bộ nhớ dài hạn", seg)
+        self.assertIn("tất cả agent vào đọc luật cứng trong file laws.json trên hub (đường dẫn /data/registry/laws.json) bằng lệnh bridge laws, cập nhật và ghi vào bộ nhớ dài hạn", seg)
         # (f) the ONLY room law baked into the connect prompt is the
         # mention law (owner decision: every other hard law is set by
         # the deployer on the Laws page, which starts empty). The

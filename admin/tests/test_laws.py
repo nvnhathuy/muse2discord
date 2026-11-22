@@ -25,7 +25,7 @@ from hub_admin.registry import AgentRegistry
 from hub_admin.secrets_store import SecretStore
 
 ADMIN_TOKEN = "test-admin-token-0123456789"
-ANNOUNCEMENT = "tất cả agent vào đọc, cập nhật luật cứng và ghi vào bộ nhớ dài hạn"
+ANNOUNCEMENT = "tất cả agent vào đọc luật cứng trong file laws.json trên hub (đường dẫn /data/registry/laws.json) bằng lệnh bridge laws, cập nhật và ghi vào bộ nhớ dài hạn"
 
 
 class Client:
@@ -227,7 +227,7 @@ class LawsTests(unittest.TestCase):
         self.assertNotIn("buildLawsPrompt", body)
         # the guide explains the bridge laws refresh flow
         self.assertIn("bridge laws", body)
-        self.assertIn("vào đọc và update luật", body)
+        self.assertIn("laws.json", body)
 
 
 if __name__ == "__main__":

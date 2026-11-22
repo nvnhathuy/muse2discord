@@ -91,7 +91,7 @@
     <p class="muted">Câu thông báo mẫu để dán vào phòng sau khi sửa luật — bấm nút, chép câu có sẵn rồi đăng vào phòng; agent nghe thông báo sẽ tự chạy bridge laws đọc bản mới nhất và ghi vào bộ nhớ dài hạn của chúng.</p>
     <div id="laws-write">
       <label>Nội dung luật mới <textarea id="law-text" rows="2" style="width:100%"></textarea></label>
-      <p class="muted">Luật lưu trên server của hub và áp dụng cho mọi agent trong phòng. Thêm/sửa/xoá ở đây xong, hãy thông báo trong phòng “vào đọc và update luật” — agent tự đọc bản mới nhất bằng lệnh bridge laws và ghi vào bộ nhớ của chúng.</p>
+      <p class="muted">Luật lưu trên server của hub và áp dụng cho mọi agent trong phòng. Thêm/sửa/xoá ở đây xong, hãy thông báo trong phòng “tất cả agent vào đọc luật cứng trong file laws.json trên hub (đường dẫn /data/registry/laws.json) bằng lệnh bridge laws, cập nhật và ghi vào bộ nhớ dài hạn”.</p>
       <button id="law-add-btn" type="button">Thêm luật</button>
     </div>
     <p class="muted hidden" id="laws-readonly-note">Quyền tạm hiện tại chỉ xem — chỉ admin hoặc quyền tạm mức full mới thêm/sửa/xoá được luật.</p>
@@ -168,7 +168,7 @@
             <li>Bấm nút “SSH key” ở dòng của agent, dán public key vào — trang tự thêm key lên VM điều phối và hiện fingerprint + thời gian đã thêm ngay trong hộp thoại.</li>
             <li>Agent mới mặc định ở trạng thái Tạm dừng: bấm “Mở lại” thì agent mới bắt đầu nhận tin. Điểm danh thử trong phòng để xác nhận agent trả lời được.</li>
           </ol></li>
-        <li><strong>Luật cứng:</strong> mục Luật cứng trong trang này là nơi lưu luật phòng chính thức — luật sống trên server của hub, có số phiên bản tăng thêm 1 mỗi lần thêm/sửa/xoá. Admin hoặc agent giữ quyền tạm mức full thì thêm/sửa/xoá được; quyền tạm mức khác chỉ xem. Thêm luật xong, chỉ cần thông báo trong phòng “vào đọc và update luật” — agent tự chạy lệnh <code>bridge laws</code> để đọc bản mới nhất từ server và ghi vào bộ nhớ của chúng. Nút “Prompt thông báo luật” trong mục Luật cứng có sẵn đúng câu thông báo mẫu để chép dán vào phòng.</li>
+        <li><strong>Luật cứng:</strong> mục Luật cứng trong trang này là nơi lưu luật phòng chính thức — luật sống trên server của hub, có số phiên bản tăng thêm 1 mỗi lần thêm/sửa/xoá. Admin hoặc agent giữ quyền tạm mức full thì thêm/sửa/xoá được; quyền tạm mức khác chỉ xem. Thêm luật xong, chỉ cần thông báo trong phòng “tất cả agent vào đọc luật cứng trong file laws.json trên hub (đường dẫn /data/registry/laws.json) bằng lệnh bridge laws, cập nhật và ghi vào bộ nhớ dài hạn”. Nút “Prompt thông báo luật” trong mục Luật cứng có sẵn đúng câu thông báo mẫu để chép dán vào phòng.</li>
         <li><strong>Tạm dừng 2 mức:</strong> mức hub (nút Tạm dừng trong trang) chặn định tuyến ngay lập tức, bot vẫn online trong phòng; mức agent do phía agent tự dừng, hub không can thiệp.</li>
         <li><strong>Quyền tạm:</strong> chỉ admin mới được cấp và thu hồi. Grant mức full có toàn quyền như admin, TRỪ quyền cấp grant. Token chỉ hiện đúng 1 lần lúc cấp — hãy đưa ngay cho agent. Thu hồi có hiệu lực ngay lập tức.</li>
         <li><strong>Mật khẩu admin:</strong> bản cài mới đăng nhập lần đầu bằng tên <code>admin</code> và mật khẩu mặc định <code>admin123</code> (hoặc mật khẩu ban đầu do bản cài đặt sẵn, nếu có) — trang sẽ BẮT BUỘC đổi mật khẩu ngay ở lần đăng nhập đầu, chưa đổi xong thì chưa vào được trang chính; đổi xong trang hiện mã khôi phục một lần để cất. Sau đó đổi mật khẩu bất cứ lúc nào trong mục Tài khoản quản trị. Quên mật khẩu thì dùng mã khôi phục ở màn đăng nhập — dùng xong, trang cấp một mã MỚI để cất tiếp. Mất cả mã khôi phục thì đặt lại qua SSH theo file HUONG-DAN-RESET-MAT-KHAU.md trong gói.</li>
@@ -545,7 +545,7 @@ Các giá trị phụ thuộc máy của bạn — điền theo máy của bạn
 Cơ chế luật cứng (đọc kỹ — luật sống trên server):
 1. Luật cứng đầy đủ của phòng được lưu trên server của hub — KHÔNG nằm trong prompt này; bản trên server mới là bản hiện hành. Prompt này chỉ phổ biến luật gọi tên ở mục dưới đây và cơ chế cập nhật luật này.
 2. Ngay khi kết nối xong, chạy ngay lệnh: bridge laws --agent ${a.key} — để lấy toàn bộ luật hiện hành từ server và ghi vào bộ nhớ dài hạn của bạn, kèm số phiên bản ở dòng đầu kết quả.
-3. Từ đó về sau, mỗi khi nghe trong phòng câu thông báo "tất cả agent vào đọc, cập nhật luật cứng và ghi vào bộ nhớ dài hạn" thì chạy lại bridge laws --agent ${a.key} và cập nhật bộ nhớ theo bản mới nhất trên server.
+3. Từ đó về sau, mỗi khi nghe trong phòng câu thông báo "tất cả agent vào đọc luật cứng trong file laws.json trên hub (đường dẫn /data/registry/laws.json) bằng lệnh bridge laws, cập nhật và ghi vào bộ nhớ dài hạn" thì chạy lại bridge laws --agent ${a.key} và cập nhật bộ nhớ theo bản mới nhất trên server.
 
 Luật gọi tên (bắt buộc):
 Chỉ lên tiếng khi được gọi đúng cách: dấu " ngay trước tên bạn, @mention bạn, hoặc "tất cả". Không được gọi thì im lặng.
@@ -683,7 +683,7 @@ async function deleteLaw(r) {
 // Deliberately NOT a generated prompt and with NO law text inside:
 // the laws live only on the server, agents fetch the newest version
 // themselves with `bridge laws` when they hear this announcement.
-const LAWS_ANNOUNCEMENT = "tất cả agent vào đọc, cập nhật luật cứng và ghi vào bộ nhớ dài hạn";
+const LAWS_ANNOUNCEMENT = "tất cả agent vào đọc luật cứng trong file laws.json trên hub (đường dẫn /data/registry/laws.json) bằng lệnh bridge laws, cập nhật và ghi vào bộ nhớ dài hạn";
 $("laws-prompt-btn").onclick = () => {
   $("laws-prompt-text").value = LAWS_ANNOUNCEMENT;
   $("laws-prompt-copy-status").textContent = "";
