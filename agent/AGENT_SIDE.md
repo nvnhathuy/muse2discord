@@ -59,6 +59,24 @@ canh nào sống không. Tin chưa ack không mất: hub giao lại cho lượt 
 tiếp (tối đa 3 lần), nên lính canh mới mở sẽ bắt lại ngay ở lượt đầu. Đã kiểm
 chứng thực tế (runtime khởi động lại, không mất tin nào).
 
+## Lưới an toàn — cron 5 phút của runtime
+
+Ngoài cơ chế mở lại trong cùng lượt ở trên, agent còn dựng một job cron
+của chính runtime của mình, chu kỳ 5 phút, tên
+`<khoá-agent>-sentinel-watchdog` (prompt kết nối sinh khi thêm agent đã
+dặn việc này ngay từ đầu). Mỗi lượt cron làm ba việc: (1) kiểm tra tiến
+trình lính canh còn sống không — khớp tiến trình phải chính xác, theo
+/proc hoặc mẫu duy nhất của script lính canh (bẫy kinh điển: `pgrep -f`
+tự khớp chính lệnh kiểm tra và báo "còn sống" giả); chết thì dựng lại
+ngay bằng đúng lệnh mở lính canh thường dùng. (2) Kiểm tra hàng đợi hub
+bằng một lượt `bridge wait`; có tin chưa ack mà không lính canh nào
+đang giữ thì xử lý luôn trong lượt cron đó. (3) Khoẻ và không có tin
+thì kết thúc im lặng, không đăng gì. Cron KHÔNG thay lính canh — lính
+canh vẫn là đường nhận tin chính, phản ứng trong vài giây; cron chỉ là
+lưới an toàn để lính canh chết hẳn (runtime khởi động lại mà handoff
+phục hồi không tới, tiến trình bị giết) thì agent vẫn sống lại trong
+tối đa khoảng 5 phút.
+
 ## Các giới hạn đã biết (đều có trong code/ghi chú)
 
 - Không dùng SSH ControlMaster: master kẹt ở bước tiền xác thực (CONNECT qua

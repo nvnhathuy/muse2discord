@@ -138,7 +138,9 @@ Một trang web duy nhất (đăng nhập bằng mật khẩu admin), gồm:
 - **Sinh prompt kết nối**: ngay sau khi thêm agent, trang tự sinh một
   prompt đầy đủ để gửi cho agent — gồm thông tin kết nối, luật phòng và
   **code mẫu lính canh nguyên văn** (agent không phải tự viết lính
-  canh). Prompt **không chứa token bot**.
+  canh). Prompt **không chứa token bot**. Prompt cũng dặn agent
+  Muse tạo sẵn **lịch cron 5 phút của runtime** — lưới an toàn
+  tự dựng lại lính canh khi lính canh chết.
 - **Tự thêm SSH key cho agent (keydrop)**: agent gửi PUBLIC key, admin
   dán vào hộp thoại "SSH key" trong trang — trang tự thêm key lên máy
   chủ (nơi agent SSH tới; nếu tách hai máy thì là máy điều phối) qua một
@@ -535,6 +537,14 @@ Trên máy của agent (chi tiết ở `agent/AGENT_SIDE.md`):
 3. Chạy `bash sentinel.sh` dưới dạng tiến trình nền. Có tin, lính canh
    kết thúc và đánh thức agent; agent trả lời bằng `say.sh` rồi **mở
    lại lính canh ngay**.
+4. Tạo **lịch cron 5 phút của runtime** của agent (job tên
+   `<khoá-agent>-sentinel-watchdog`): mỗi lượt kiểm tra lính canh còn
+   sống không — chết thì dựng lại — và kiểm tra hàng đợi hub, có tin
+   chưa ack mà không lính canh nào đang giữ thì xử lý luôn trong lượt
+   đó. Đây là lưới an toàn khi lính canh chết hẳn (runtime khởi động
+   lại, tiến trình bị giết): lính canh vẫn là đường nhận tin chính,
+   cron chỉ dựng lại nó, nên agent sống lại tối đa khoảng 5 phút sau.
+   Prompt kết nối sinh khi thêm agent đã dặn sẵn việc này.
 
 ### Bước 10 — Kiểm chứng
 
