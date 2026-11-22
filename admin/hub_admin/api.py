@@ -33,6 +33,7 @@ from .delivery import DeliveryState
 from .grants import Grant, GrantStore, scope_allows
 from .journal import retention_report
 from .keydrop import KeydropError
+from .laws import LawsStore
 from .ops_config import OpsConfig
 from .registry import AgentRegistry, RegistryError
 from .secrets_store import SecretStore
@@ -68,6 +69,7 @@ class AdminApp:
         static_dir: Optional[str] = None,
         credentials=None,
         keydrop=None,
+        laws: Optional[LawsStore] = None,
     ):
         self.registry = registry
         self.secrets = secrets_store
@@ -93,6 +95,12 @@ class AdminApp:
         # coordination VM. None = feature not wired on this deployment;
         # the ssh-key endpoint then answers 502.
         self.keydrop = keydrop
+        # Room hard laws ("luật cứng"): server-side store in the same
+        # registry dir as agents.json. build_app wires it explicitly;
+        # the fallback keeps direct constructions (tests, tools)
+        # working with the same on-disk location.
+        self.laws = laws or LawsStore(os.path.join(
+            os.path.dirname(os.path.abspath(registry.state_path)), "laws.json"))
 
     # ------------------------------------------------------------------
     # identity / authorization
@@ -315,6 +323,41 @@ class AdminApp:
         cfg = self.ops.get_all()
         return 200, {"journal": retention_report(
             self.journal_path, int(cfg["journal_online_days"]), int(cfg["journal_rotate_mb"]))}
+
+    # ------------------------------------------------------------------
+    # room hard laws ("luật cứng"): read for every authenticated
+    # identity; writes only for the admin principal or a full grant
+    # ("edit_laws" is in no read/operate op set, so scope_allows
+    # rejects those scopes while full passes as admin-equivalent).
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _law_author(identity: Identity) -> str:
+        return "admin" if identity.kind == "admin" else (identity.grant_id or identity.name)
+
+    def get_laws(self, identity: Identity):
+        self.authorize(identity, "view")
+        return 200, self.laws.snapshot()
+
+    def add_law(self, identity: Identity, body: dict):
+        self.authorize(identity, "edit_laws")
+        rule = self.laws.add(body.get("text", ""), created_by=self._law_author(identity))
+        self.audit.record(identity.name, "add_law", rule["id"],
+                          {"text": rule["text"]}, grant_id=identity.grant_id)
+        return 201, {"law": rule, "version": self.laws.snapshot()["version"]}
+
+    def update_law(self, identity: Identity, rule_id: str, body: dict):
+        self.authorize(identity, "edit_laws")
+        rule = self.laws.update(rule_id, body.get("text", ""))
+        self.audit.record(identity.name, "update_law", rule_id,
+                          {"text": rule["text"]}, grant_id=identity.grant_id)
+        return 200, {"law": rule, "version": self.laws.snapshot()["version"]}
+
+    def delete_law(self, identity: Identity, rule_id: str):
+        self.authorize(identity, "edit_laws")
+        removed = self.laws.delete(rule_id)
+        self.audit.record(identity.name, "delete_law", rule_id,
+                          {"text": removed["text"]}, grant_id=identity.grant_id)
+        return 200, {"deleted": rule_id, "version": self.laws.snapshot()["version"]}
 
     def list_grants(self, identity: Identity):
         if identity.kind != "admin":
@@ -583,6 +626,15 @@ def make_handler(app: AdminApp):
                 return app.get_audit(identity, query)
             if parts == ["api", "journal"] and method == "GET":
                 return app.get_journal(identity)
+            if parts == ["api", "laws"] and method == "GET":
+                return app.get_laws(identity)
+            if parts == ["api", "laws"] and method == "POST":
+                return app.add_law(identity, body)
+            if len(parts) == 3 and parts[:2] == ["api", "laws"]:
+                if method == "PUT":
+                    return app.update_law(identity, parts[2], body)
+                if method == "DELETE":
+                    return app.delete_law(identity, parts[2])
             if parts == ["api", "grants"] and method == "GET":
                 return app.list_grants(identity)
             if parts == ["api", "grants"] and method == "POST":
@@ -602,6 +654,7 @@ def make_handler(app: AdminApp):
         do_GET = lambda self: self._dispatch("GET")
         do_POST = lambda self: self._dispatch("POST")
         do_PATCH = lambda self: self._dispatch("PATCH")
+        do_PUT = lambda self: self._dispatch("PUT")
         do_DELETE = lambda self: self._dispatch("DELETE")
 
     return Handler

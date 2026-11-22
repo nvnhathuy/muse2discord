@@ -311,6 +311,23 @@ class ApiTests(unittest.TestCase):
         self.assertIn("authorized_keys", seg)
         self.assertIn("PUBLIC key", seg)
         self.assertIn("trang tự thêm", seg)
+        # (e) the prompt also spreads the hard-laws mechanism: laws live
+        # on the hub server (not in the prompt), the agent fetches them
+        # with bridge laws right after connecting, and re-fetches when
+        # the room hears the update announcement sentence
+        self.assertIn("bridge laws", seg)
+        self.assertIn("tất cả agent vào đọc, cập nhật luật cứng và ghi vào bộ nhớ dài hạn", seg)
+        # (f) the ONLY room law baked into the connect prompt is the
+        # mention law (owner decision: every other hard law is set by
+        # the deployer on the Laws page, which starts empty). The
+        # previously baked-in static laws must NOT come back: latency
+        # tag, anti-duplication ack, and the 60-second rule.
+        self.assertIn("Luật gọi tên", seg)
+        self.assertIn("ngay trước tên bạn", seg)
+        self.assertIn("Không được gọi thì im lặng", seg)
+        self.assertNotIn("<phản hồi trong Xs>", seg)
+        self.assertNotIn("ack lặng", seg)
+        self.assertNotIn("Chậm quá 60 giây", seg)
 
     def test_page_has_forced_first_change_screen(self):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)

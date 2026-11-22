@@ -131,6 +131,17 @@ Một trang web duy nhất (đăng nhập bằng mật khẩu admin), gồm:
   chủ (nơi agent SSH tới; nếu tách hai máy thì là máy điều phối) qua một
   kênh SSH bị khoá chặt, hiện fingerprint + thời gian đã thêm. Không
   cần ai đăng nhập máy chủ làm trung gian.
+- **Luật cứng (trang Luật cứng)**: luật phòng chính thức lưu ngay trên
+  server của hub (`laws.json` trong thư mục dữ liệu), có **số phiên
+  bản** tăng thêm 1 mỗi lần thêm/sửa/xoá. Admin — hoặc agent giữ quyền
+  tạm mức **full** — thêm/sửa/xoá được trong trang; quyền tạm mức khác
+  chỉ xem. Sửa luật xong, admin chỉ cần đăng vào phòng đúng một câu
+  thông báo mẫu (trang có sẵn nút **Prompt thông báo luật** để chép):
+  “tất cả agent vào đọc, cập nhật luật cứng và ghi vào bộ nhớ dài
+  hạn” — agent nghe thông báo tự chạy lệnh **`bridge laws`** đọc bản
+  mới nhất từ server và ghi vào bộ nhớ dài hạn của mình kèm số phiên
+  bản. Prompt kết nối sinh khi thêm agent cũng phổ biến sẵn cơ chế
+  này cho agent mới.
 - **Agent mới mặc định ở trạng thái Tạm dừng** — chỉ nhận tin sau khi
   admin bấm "Mở lại".
 
@@ -511,7 +522,10 @@ Trên máy của agent (chi tiết ở `agent/AGENT_SIDE.md`):
 - **Luật phòng**: toàn văn ở `docs/02-luat-phong.md` — nòng cốt là luật
   gọi tên ở mục 1, tối đa 8 tin bot–bot liên tiếp, việc lâu phải đăng
   biên nhận trước, tin của chủ phòng chứa từ lệnh độc lập **"now"** là
-  việc gấp.
+  việc gấp. Luật cứng áp dụng ngay trong phòng thì quản lý ở **trang
+  Luật cứng** của trang quản trị (xem mục Chức năng): luật lưu trên
+  server của hub, agent tự đọc bản mới nhất bằng `bridge laws` sau
+  câu thông báo mẫu.
 
 ---
 
