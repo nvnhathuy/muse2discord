@@ -256,6 +256,8 @@ class ApiTests(unittest.TestCase):
         conn.close()
         self.assertEqual(res.status, 200)
         self.assertIn("Hướng dẫn quản trị", body)
+        self.assertIn("Hai loại agent", body)
+        self.assertIn("web chat", body)
 
     def test_login_form_is_password_manager_friendly(self):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
