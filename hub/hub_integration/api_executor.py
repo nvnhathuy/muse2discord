@@ -54,6 +54,13 @@ OPENAI_HOST = "https://api.openai.com"
 # returned content comes back empty. 4096 leaves room for the
 # reasoning plus a full ~1900-character answer (spec floor: 2500).
 OPENAI_MAX_TOKENS = 4096
+# Browser-style User-Agent for every provider call. urllib's default
+# ("Python-urllib/3.x") is treated as a bot by Cloudflare: Groq
+# answers it with HTTP 403 error 1010 (found live 2026-11-23 on the
+# Groq seat); the same key + model answers 200 with a browser UA.
+BROWSER_USER_AGENT = ("Mozilla/5.0 (X11; Linux x86_64) "
+                      "AppleWebKit/537.36 (KHTML, like Gecko) "
+                      "Chrome/120.0.0.0 Safari/537.36")
 MODEL_TIMEOUT = 40.0     # seconds per model call (contract 1.4)
 TOTAL_TIMEOUT = 45.0     # seconds for the whole race
 PROMPT_LIMIT = 6000      # characters (contract 1.4)
@@ -127,6 +134,7 @@ def urllib_transport(provider: str, model: str, api_key: str,
                      prompt: str, timeout: float, base_url=None) -> str:
     url, headers, body = build_request(provider, model, api_key, prompt,
                                        base_url=base_url)
+    headers["User-Agent"] = BROWSER_USER_AGENT
     request = urllib.request.Request(
         url, data=json.dumps(body).encode("utf-8"), headers=headers,
         method="POST")

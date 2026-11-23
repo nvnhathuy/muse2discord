@@ -12,10 +12,12 @@ import os
 import tempfile
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
 from hub_integration.api_agents import ApiAgentsStore
 from hub_integration.api_executor import (
-    ApiExecutor, DailyBudget, build_request, parse_response)
+    BROWSER_USER_AGENT, ApiExecutor, DailyBudget, build_request,
+    parse_response, urllib_transport)
 
 SAMPLE_KEY = "-".join(["fake", "provider", "key"])
 
@@ -291,6 +293,53 @@ class ProviderAdapterTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_response("openai", {"choices": [
                 {"message": {"content": "   "}}]})
+
+    def test_urllib_transport_sends_browser_user_agent(self):
+        # Regression: urllib's default UA ("Python-urllib/3.x") gets
+        # HTTP 403 error 1010 from Cloudflare (Groq seat, live
+        # 2026-11-23); the transport must send a browser UA for
+        # every provider.
+        seen = {}
+
+        class FakeResp:
+            def __init__(self, payload):
+                self._payload = payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self):
+                return json.dumps(self._payload).encode("utf-8")
+
+        def fake_urlopen(req, timeout=None):
+            seen["ua"] = req.get_header("User-agent")
+            seen["url"] = req.full_url
+            if "groq" in req.full_url:
+                payload = {"choices": [{"message": {"content": "ok"}}]}
+            else:
+                payload = {"candidates": [{"content": {"parts": [
+                    {"text": "ok"}]}}]}
+            return FakeResp(payload)
+
+        with mock.patch("urllib.request.urlopen", fake_urlopen):
+            text = urllib_transport(
+                "openai", "openai/gpt-oss-120b", SAMPLE_KEY, "hi", 5.0,
+                base_url="https://api.groq.com/openai")
+            self.assertEqual(text, "ok")
+            self.assertEqual(seen["ua"], BROWSER_USER_AGENT)
+            self.assertEqual(
+                seen["url"],
+                "https://api.groq.com/openai/v1/chat/completions")
+            text = urllib_transport("gemini", "gemini-2.0-flash",
+                                    SAMPLE_KEY, "hi", 5.0)
+            self.assertEqual(text, "ok")
+            self.assertEqual(seen["ua"], BROWSER_USER_AGENT)
+            self.assertTrue(
+                seen["url"].startswith(
+                    "https://generativelanguage.googleapis.com/"))
 
     def test_parse_response_defensive(self):
         self.assertEqual(parse_response(
