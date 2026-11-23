@@ -554,7 +554,9 @@ class Reliability:
     async def _flush_recoveries(self):
         for group in self.warning_state:
             if group.get("needs_edit") and group["message_id"]:
-                await self._post_warning(self._warning_text(group), group["message_id"])
+                # _post_warning may replace the message (new ID) when the
+                # stored one cannot be edited; keep the ID it actually used.
+                group["message_id"] = await self._post_warning(self._warning_text(group), group["message_id"])
                 group["needs_edit"] = False
                 self._save_warnings()
             if group.get("recovery_pending"):
