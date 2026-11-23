@@ -90,12 +90,35 @@ class DiscordRuntime:
                                                roles=False, everyone=False, replied_user=False)
                    if mention else self.discord.AllowedMentions.none())
         self.warning_texts.add(content)
+        sent = None
         if edit_id:
-            sent = await channel.get_partial_message(int(edit_id)).edit(content=content, allowed_mentions=allowed)
-        else:
+            sent = await self._edit_warning(int(edit_id), content, allowed)
+        if sent is None:
             sent = await channel.send(content, allowed_mentions=allowed)
         self.warning_ids.add(str(sent.id))
         return str(sent.id)
+
+    async def _edit_warning(self, edit_id, content, allowed):
+        # Discord lets a bot edit only its OWN messages, but a stored warning
+        # may have been posted by another of our bots (warning state restored
+        # after the registry order changed which agent is the default), and
+        # editing it with the wrong bot is refused with Forbidden forever.
+        # Try each of our bots in turn - the author's bot succeeds. Returns
+        # None when no bot may edit the message, so the caller posts a fresh
+        # warning and stores the new ID instead of retrying a doomed edit.
+        if self.config.hub_bot_id:
+            keys = ("hub",)
+        else:
+            default = self._default_agent()
+            keys = (default,) + tuple(a for a in self.config.agents if a != default)
+        for key in keys:
+            try:
+                channel = self.channel(key)
+                return await channel.get_partial_message(edit_id).edit(
+                    content=content, allowed_mentions=allowed)
+            except Exception:
+                continue
+        return None
 
     def _hub_message(self, message):
         sender = self.config.hub_bot_id or self.config.agents[self._default_agent()].bot_id

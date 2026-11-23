@@ -573,6 +573,60 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         partial.edit.assert_awaited_once()
         self.assertTrue(runtime._hub_message(SimpleNamespace(id=9000, content="ignored", author=SimpleNamespace(id=101))))
 
+    async def test_warning_edit_falls_through_to_author_bot(self):
+        # The stored warning was posted by the worker bot; the default (lead)
+        # bot may not edit it (Discord Forbidden). The edit must be retried
+        # through the other bots until the author's bot accepts it.
+        runtime = DiscordRuntime(self.cfg)
+        lead_channel = SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(id=9100)))
+        lead_partial = SimpleNamespace(edit=AsyncMock(side_effect=Exception("Forbidden")))
+        lead_channel.get_partial_message = lambda mid: lead_partial
+        worker_channel = SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(id=9200)))
+        worker_partial = SimpleNamespace(edit=AsyncMock(return_value=SimpleNamespace(id=9000)))
+        worker_channel.get_partial_message = lambda mid: worker_partial
+        runtime.channels["lead"] = lead_channel
+        runtime.channels["worker"] = worker_channel
+        runtime.online["lead"].set()
+        runtime.online["worker"].set()
+        result = await runtime.send_warning("✅ worker đã hồi", "9000")
+        self.assertEqual(result, "9000")
+        worker_partial.edit.assert_awaited_once()
+        lead_channel.send.assert_not_called()
+        worker_channel.send.assert_not_called()
+
+    async def test_warning_edit_all_bots_refused_posts_fresh(self):
+        # No bot may edit the stored warning (e.g. it belongs to a removed
+        # bot): post a fresh warning and return the NEW id so callers stop
+        # retrying the doomed edit.
+        runtime = DiscordRuntime(self.cfg)
+        channels = {}
+        for key in ("lead", "worker", "deputy"):
+            channel = SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(id=9100)))
+            partial = SimpleNamespace(edit=AsyncMock(side_effect=Exception("Forbidden")))
+            channel.get_partial_message = lambda mid, p=partial: p
+            channels[key] = channel
+            runtime.channels[key] = channel
+            runtime.online[key].set()
+        result = await runtime.send_warning("✅ lead đã hồi", "9000")
+        self.assertEqual(result, "9100")
+        channels["lead"].send.assert_awaited_once()
+
+    async def test_flush_recoveries_stores_replacement_message_id(self):
+        # When the transport replaces an uneditable warning with a fresh
+        # post, the group must keep the NEW message id, not the stale one.
+        group = {"message_id": "555", "tier2_id": None, "needs_edit": True,
+                 "members": {"lead": {"recovered": True, "minutes": 3.0}},
+                 "recovery_pending": []}
+        self.hub.warning_state = [group]
+
+        async def replacing_send_warning(content, edit_id=None, mention=False):
+            return "777" if edit_id else "99000"
+
+        self.transport.send_warning = replacing_send_warning
+        await self.hub._flush_recoveries()
+        self.assertEqual(group["message_id"], "777")
+        self.assertFalse(group["needs_edit"])
+
 
 @pytest.mark.parametrize("key,value", [("LEAD_RECEIVE_DEADLINE", "nan"), ("WORKER_RECEIVE_DEADLINE", "inf"),
     ("DEPUTY_RECEIVE_DEADLINE", "179"), ("HUB_BOT_ID", "101"), ("BRIDGE_EXTERNAL_ALERTS_ENABLED", "yes")])
