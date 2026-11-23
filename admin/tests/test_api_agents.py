@@ -172,6 +172,37 @@ class ApiAgentTests(unittest.TestCase):
         self.assertEqual(status, 201)
         self.assertEqual(len(data["agent"]["api"]["models"]), 4)
 
+    def test_create_api_agent_with_groq_base_url(self):
+        status, data = self._create_api(
+            provider="openai", models=["openai/gpt-oss-120b"],
+            base_url="https://api.groq.com/openai/v1")
+        self.assertEqual(status, 201)
+        # a trailing /v1 is normalized away on write
+        self.assertEqual(data["agent"]["api"]["base_url"],
+                         "https://api.groq.com/openai")
+        with open(os.path.join(self.tmp, "api_agents.json"),
+                  encoding="utf-8") as fh:
+            cfg = json.load(fh)
+        self.assertEqual(cfg["agents"][self.key]["base_url"],
+                         "https://api.groq.com/openai")
+
+    def test_create_api_agent_without_base_url_is_null(self):
+        status, data = self._create_api()
+        self.assertEqual(status, 201)
+        self.assertIsNone(data["agent"]["api"]["base_url"])
+
+    def test_create_api_agent_bad_base_url(self):
+        for bad in ("http://api.groq.com/openai",
+                    "https://evil.example.com/openai",
+                    "https://api.groq.com.evil.com"):
+            status, _ = self._create_api(base_url=bad)
+            self.assertEqual(status, 400)
+            # a rejected create leaves no profile behind
+            status, _ = self.client.call("GET", f"/api/agents/{self.key}")
+            self.assertEqual(status, 400)
+            type(self)._counter += 1
+            self.key = f"apiagent{type(self)._counter}"
+
     def test_set_api_key_flow(self):
         status, _ = self._create_api()
         self.assertEqual(status, 201)
@@ -238,6 +269,34 @@ class ApiAgentTests(unittest.TestCase):
         self.assertEqual(status, 201)
         self.assertEqual(data["agent"]["kind"], "ssh")
         self.assertNotIn("api", data["agent"])
+
+
+class ValidateBaseUrlTests(unittest.TestCase):
+    def test_normalization(self):
+        from hub_admin.api_agents import ApiAgentsError, validate_base_url
+        self.assertIsNone(validate_base_url(None))
+        self.assertIsNone(validate_base_url(""))
+        self.assertIsNone(validate_base_url("   "))
+        self.assertEqual(validate_base_url("https://api.groq.com/openai"),
+                         "https://api.groq.com/openai")
+        self.assertEqual(validate_base_url("https://api.groq.com/openai/v1"),
+                         "https://api.groq.com/openai")
+        self.assertEqual(validate_base_url("https://api.groq.com/openai/v1/"),
+                         "https://api.groq.com/openai")
+        self.assertEqual(validate_base_url("https://api.openai.com/v1"),
+                         "https://api.openai.com")
+        self.assertEqual(validate_base_url("https://API.GROQ.COM/openai"),
+                         "https://api.groq.com/openai")
+
+    def test_rejection(self):
+        from hub_admin.api_agents import ApiAgentsError, validate_base_url
+        for bad in ("http://api.groq.com/openai",
+                    "https://evil.example.com",
+                    "https://api.groq.com.evil.com",
+                    "api.groq.com/openai",
+                    "ftp://api.groq.com"):
+            with self.assertRaises(ApiAgentsError):
+                validate_base_url(bad)
 
 
 class RegistryKindTests(unittest.TestCase):
