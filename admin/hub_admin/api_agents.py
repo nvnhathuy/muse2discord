@@ -6,8 +6,11 @@ lives next to the other registry state:
 
 - ``api_agents.json`` in the registry dir (mode 0600, atomic writes):
   ``{"version": 1, "agents": {"<key>": {"provider": ..., "models":
-  [...], "updated_at": ...}}}`` - the shared source of truth the hub
-  side reads with its own store implementation of the same format.
+  [...], "base_url": ..., "updated_at": ...}}}`` - the shared source
+  of truth the hub side reads with its own store implementation of
+  the same format. ``base_url`` is optional (null = the provider
+  default); when set it points an OpenAI-compatible provider at a
+  different host, e.g. Groq.
 - ``api-keys/<agent_key>.key`` (mode 0600): the raw provider key, one
   file per agent. The key NEVER appears in the JSON, in an API
   response, in the audit log or on the page - this module deliberately
@@ -25,9 +28,14 @@ import re
 import threading
 import time
 from typing import Dict, List, Optional
+from urllib.parse import urlsplit
 
 PROVIDERS = ("gemini", "openai")
 FORMAT_VERSION = 1
+# Hosts a per-agent base_url may point at (the executor's pinned
+# destinations for OpenAI-compatible providers; anything else is a
+# misdirected API key).
+BASE_URL_HOSTS = ("api.openai.com", "api.groq.com")
 # Form defaults (contract 1.3): suggested when an admin picks the
 # provider and leaves the model list empty.
 DEFAULT_MODELS = {
@@ -54,6 +62,28 @@ def validate_provider(provider: str) -> str:
     if provider not in PROVIDERS:
         raise ApiAgentsError(f"provider must be one of {PROVIDERS}")
     return provider
+
+
+def validate_base_url(base_url) -> Optional[str]:
+    """Normalize an optional per-agent API base URL. Empty means the
+    provider default (None). Only https URLs on the allowlisted
+    hosts; a trailing /v1 is stripped so the executor appends the
+    /v1/chat/completions path exactly once."""
+    if base_url is None:
+        return None
+    value = str(base_url).strip()
+    if not value:
+        return None
+    parsed = urlsplit(value)
+    if parsed.scheme != "https":
+        raise ApiAgentsError("base_url must use https")
+    host = (parsed.hostname or "").lower()
+    if host not in BASE_URL_HOSTS:
+        raise ApiAgentsError(f"base_url host must be one of {BASE_URL_HOSTS}")
+    path = parsed.path.rstrip("/")
+    if path.endswith("/v1"):
+        path = path[:-3].rstrip("/")
+    return f"https://{host}" + path
 
 
 def validate_models(models, provider: str) -> List[str]:
@@ -106,6 +136,7 @@ class ApiAgentsStore:
                     agents[key] = {
                         "provider": cfg.get("provider", ""),
                         "models": list(cfg.get("models") or []),
+                        "base_url": cfg.get("base_url") or None,
                         "updated_at": cfg.get("updated_at"),
                     }
         self._agents = agents
@@ -146,27 +177,30 @@ class ApiAgentsStore:
 
     def public_block(self, key: str) -> Optional[dict]:
         """The `api` block the admin API attaches to agent rows:
-        provider + models + key presence. Never the key."""
+        provider + models + base_url + key presence. Never the key."""
         cfg = self.get_config(key)
         if cfg is None:
             return None
         return {
             "provider": cfg["provider"],
             "models": list(cfg["models"]),
+            "base_url": cfg.get("base_url"),
             "has_key": self.has_key(key),
         }
 
     # ------------------------------------------------------------------
     # writes
     # ------------------------------------------------------------------
-    def set_config(self, key: str, provider: str, models) -> dict:
+    def set_config(self, key: str, provider: str, models,
+                   base_url=None) -> dict:
         key = _check_key(key)
         provider = validate_provider(provider)
         models = validate_models(models, provider)
+        base_url = validate_base_url(base_url)
         with self._lock:
             self._reload_if_changed()
             cfg = {"provider": provider, "models": models,
-                   "updated_at": time.time()}
+                   "base_url": base_url, "updated_at": time.time()}
             self._agents[key] = cfg
             self._save()
             return dict(cfg)

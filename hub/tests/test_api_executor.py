@@ -91,7 +91,7 @@ class ExecutorTests(unittest.IsolatedAsyncioTestCase):
     async def test_race_first_success_wins_and_is_verbatim(self):
         calls = []
 
-        def transport(provider, model, api_key, prompt, timeout):
+        def transport(provider, model, api_key, prompt, timeout, base_url=None):
             calls.append((provider, model, api_key, prompt))
             if model == "model-a":
                 raise RuntimeError("model down")
@@ -112,7 +112,7 @@ class ExecutorTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(c[0] == "gemini" for c in calls))
 
     async def test_all_models_fail_still_final(self):
-        def transport(provider, model, api_key, prompt, timeout):
+        def transport(provider, model, api_key, prompt, timeout, base_url=None):
             raise RuntimeError("everything down")
 
         hub, executor = self.build(transport)
@@ -156,7 +156,7 @@ class ExecutorTests(unittest.IsolatedAsyncioTestCase):
     async def test_prompt_truncated_and_answer_truncated(self):
         seen = {}
 
-        def transport(provider, model, api_key, prompt, timeout):
+        def transport(provider, model, api_key, prompt, timeout, base_url=None):
             seen["prompt"] = prompt
             return "x" * 5000
 
@@ -177,7 +177,7 @@ class ExecutorTests(unittest.IsolatedAsyncioTestCase):
                 {"text": "Luật mẫu một"}, {"text": "Luật mẫu hai"}]}, fh)
         seen = {}
 
-        def transport(provider, model, api_key, prompt, timeout):
+        def transport(provider, model, api_key, prompt, timeout, base_url=None):
             seen["prompt"] = prompt
             return "ok"
 
@@ -210,6 +210,28 @@ class ExecutorTests(unittest.IsolatedAsyncioTestCase):
         await self.drain(hub)
         self.assertEqual(budget.count("beta"), 2)  # two models raced
 
+    async def test_race_with_groq_base_url_answers(self):
+        seen = {}
+
+        def transport(provider, model, api_key, prompt, timeout, base_url=None):
+            seen["provider"] = provider
+            seen["model"] = model
+            seen["base_url"] = base_url
+            return "Đáp án từ Groq"
+
+        store = FakeStore(cfg={
+            "provider": "openai", "models": ["openai/gpt-oss-120b"],
+            "base_url": "https://api.groq.com/openai"})
+        hub, executor = self.build(transport, store=store)
+        executor.schedule("beta", make_message())
+        await self.drain(hub)
+        self.assertEqual(seen["provider"], "openai")
+        self.assertEqual(seen["model"], "openai/gpt-oss-120b")
+        self.assertEqual(seen["base_url"], "https://api.groq.com/openai")
+        finals = [s for s in hub.says if s[4]]
+        self.assertEqual(len(finals), 1)
+        self.assertEqual(finals[0][2], "Đáp án từ Groq")
+
 
 class BudgetTests(unittest.TestCase):
     def test_spend_limit_and_persistence(self):
@@ -235,8 +257,40 @@ class ProviderAdapterTests(unittest.TestCase):
         self.assertEqual(url, "https://api.openai.com/v1/chat/completions")
         self.assertEqual(headers["Authorization"], "Bearer " + SAMPLE_KEY)
         self.assertEqual(body["messages"][0]["content"], "hi")
+        self.assertEqual(body["max_tokens"], 4096)
         with self.assertRaises(ValueError):
             build_request("bogus", "m", SAMPLE_KEY, "hi")
+
+    def test_openai_base_url_groq(self):
+        for base in ("https://api.groq.com/openai",
+                     "https://api.groq.com/openai/v1",
+                     "https://api.groq.com/openai/v1/"):
+            url, headers, body = build_request(
+                "openai", "openai/gpt-oss-120b", SAMPLE_KEY, "hi",
+                base_url=base)
+            self.assertEqual(url, "https://api.groq.com/openai/v1/chat/completions")
+            self.assertEqual(headers["Authorization"], "Bearer " + SAMPLE_KEY)
+            self.assertEqual(body["model"], "openai/gpt-oss-120b")
+            self.assertEqual(body["max_tokens"], 4096)
+        # an explicit openai base_url still resolves to the same default URL
+        url, _, _ = build_request("openai", "m-y", SAMPLE_KEY, "hi",
+                                  base_url="https://api.openai.com/v1")
+        self.assertEqual(url, "https://api.openai.com/v1/chat/completions")
+
+    def test_parse_response_groq_style_payload(self):
+        payload = {
+            "id": "chatcmpl-abc", "object": "chat.completion",
+            "created": 1700000000, "model": "openai/gpt-oss-120b",
+            "choices": [{"index": 0, "finish_reason": "stop",
+                         "message": {"role": "assistant",
+                                     "content": "Xin chào từ Groq"}}],
+            "usage": {"prompt_tokens": 12, "completion_tokens": 8,
+                      "total_tokens": 20},
+        }
+        self.assertEqual(parse_response("openai", payload), "Xin chào từ Groq")
+        with self.assertRaises(ValueError):
+            parse_response("openai", {"choices": [
+                {"message": {"content": "   "}}]})
 
     def test_parse_response_defensive(self):
         self.assertEqual(parse_response(
