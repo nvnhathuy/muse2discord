@@ -14,8 +14,11 @@ Hard locks, enforced by code rather than by prompt wording
 1. No tool surface: the model receives plain text and its answer is
    used VERBATIM as the reply text. Nothing is interpreted or run.
 2. Pinned destinations: the provider URL is chosen by the provider
-   branch in this file - never from config, profile or message text.
-   The API key is placed only in that provider's header.
+   branch in this file - never from profile or message text. The
+   openai branch may use a per-agent base_url from the agent config,
+   but only one the admin store validated against its host allowlist
+   (api.openai.com, api.groq.com); anything else keeps the pinned
+   default. The API key is placed only in that provider's header.
 3. Hard budget: at most ``daily_budget`` provider calls per agent
    per day (default 500), counted in code before each call and
    persisted across restarts; past the cap the executor stops and
@@ -45,6 +48,12 @@ log = logging.getLogger(__name__)
 
 GEMINI_HOST = "https://generativelanguage.googleapis.com"
 OPENAI_HOST = "https://api.openai.com"
+# Reply-token budget for the openai branch. Reasoning models such as
+# openai/gpt-oss-120b spend tokens on reasoning first; with a small or
+# missing max_tokens the reasoning eats the whole budget and the
+# returned content comes back empty. 4096 leaves room for the
+# reasoning plus a full ~1900-character answer (spec floor: 2500).
+OPENAI_MAX_TOKENS = 4096
 MODEL_TIMEOUT = 40.0     # seconds per model call (contract 1.4)
 TOTAL_TIMEOUT = 45.0     # seconds for the whole race
 PROMPT_LIMIT = 6000      # characters (contract 1.4)
@@ -55,21 +64,38 @@ DEFAULT_DAILY_BUDGET = 500
 # ----------------------------------------------------------------------
 # provider adapters (contract 1.3) - the ONLY place provider URLs exist
 # ----------------------------------------------------------------------
-def build_request(provider: str, model: str, api_key: str, prompt: str):
+def _openai_base(base_url):
+    """Bare host form of an OpenAI-compatible base URL: the admin
+    store already normalizes on write, but a hand-edited config file
+    may still carry a trailing /v1 - strip it here too so the path
+    below is appended exactly once."""
+    if not base_url:
+        return OPENAI_HOST
+    base = str(base_url).strip().rstrip("/")
+    if base.endswith("/v1"):
+        base = base[:-3].rstrip("/")
+    return base or OPENAI_HOST
+
+
+def build_request(provider: str, model: str, api_key: str, prompt: str,
+                  base_url=None):
     """(url, headers, body) for one provider call. The URL comes from
     the provider branch alone; the key only enters that provider's
-    auth header."""
+    auth header. For openai, an optional per-agent base_url (validated
+    against the host allowlist by the admin store) replaces the
+    default host - e.g. Groq's OpenAI-compatible endpoint."""
     if provider == "gemini":
         url = f"{GEMINI_HOST}/v1beta/models/{model}:generateContent"
         headers = {"x-goog-api-key": api_key, "Content-Type": "application/json"}
         body = {"contents": [{"parts": [{"text": prompt}]}]}
         return url, headers, body
     if provider == "openai":
-        url = f"{OPENAI_HOST}/v1/chat/completions"
+        url = f"{_openai_base(base_url)}/v1/chat/completions"
         headers = {"Authorization": "Bearer " + api_key,
                    "Content-Type": "application/json"}
         body = {"model": model,
-                "messages": [{"role": "user", "content": prompt}]}
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": OPENAI_MAX_TOKENS}
         return url, headers, body
     raise ValueError(f"unsupported provider: {provider!r}")
 
@@ -98,8 +124,9 @@ def parse_response(provider: str, payload: dict) -> str:
 
 
 def urllib_transport(provider: str, model: str, api_key: str,
-                     prompt: str, timeout: float) -> str:
-    url, headers, body = build_request(provider, model, api_key, prompt)
+                     prompt: str, timeout: float, base_url=None) -> str:
+    url, headers, body = build_request(provider, model, api_key, prompt,
+                                       base_url=base_url)
     request = urllib.request.Request(
         url, data=json.dumps(body).encode("utf-8"), headers=headers,
         method="POST")
@@ -248,7 +275,8 @@ class ApiExecutor:
                 return ("budget", model, None)
             try:
                 text = self.transport(provider, model, api_key, prompt,
-                                      MODEL_TIMEOUT)
+                                      MODEL_TIMEOUT,
+                                      base_url=cfg.get("base_url"))
                 return ("ok", model, text)
             except Exception as exc:
                 log.warning("api model failed agent=%s provider=%s model=%s (%s)",

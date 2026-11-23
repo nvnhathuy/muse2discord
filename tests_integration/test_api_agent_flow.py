@@ -51,7 +51,8 @@ class ApiAgentFlowTests(unittest.IsolatedAsyncioTestCase):
 
             prompts = []
 
-            def provider_transport(provider, model, api_key, prompt, timeout):
+            def provider_transport(provider, model, api_key, prompt, timeout,
+                                   base_url=None):
                 prompts.append(prompt)
                 return "Đáp án từ model"
 

@@ -210,13 +210,15 @@ class AdminApp:
             # bad request never leaves a half-configured agent behind.
             self.authorize(identity, "set_api_config")
             self.require_step_up(identity, headers)
-            from .api_agents import validate_models, validate_provider
+            from .api_agents import (validate_base_url, validate_models,
+                                     validate_provider)
             provider = validate_provider(body.get("provider", ""))
             models = validate_models(body.get("models"), provider)
+            base_url = validate_base_url(body.get("base_url"))
             api_key = (body.get("api_key") or "").strip()
             if not api_key:
                 raise ApiAgentsError("api_key is required for an API agent")
-            api_cfg = (provider, models, api_key)
+            api_cfg = (provider, models, base_url, api_key)
         profile = self.registry.create(body)
         token = body.get("bot_token")
         if token:
@@ -224,11 +226,13 @@ class AdminApp:
         self.audit.record(identity.name, "create_agent", profile.key,
                           {"display_name": profile.display_name}, grant_id=identity.grant_id)
         if api_cfg is not None:
-            provider, models, api_key = api_cfg
-            self.api_agents.set_config(profile.key, provider, models)
+            provider, models, base_url, api_key = api_cfg
+            self.api_agents.set_config(profile.key, provider, models,
+                                       base_url=base_url)
             self.api_agents.set_key(profile.key, api_key)
             self.audit.record(identity.name, "set_api_config", profile.key,
-                              {"provider": provider, "models": len(models)},
+                              {"provider": provider, "models": len(models),
+                               "base_url": base_url},
                               grant_id=identity.grant_id)
         return 201, {"agent": self._decorate_api(self.registry.public_get(profile.key))}
 

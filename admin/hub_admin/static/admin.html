@@ -214,7 +214,9 @@
     <div id="f-api-block">
       <label>Provider
         <select id="f-provider"><option value="gemini">Gemini (Google)</option><option value="openai">OpenAI</option></select>
-        <span class="muted">Hãng cung cấp model cho agent này. Đích gọi bị ghim cứng trong hub theo provider — không đổi đích khác được.</span></label>
+        <span class="muted">Hãng cung cấp model cho agent này. Với OpenAI, đích gọi mặc định là api.openai.com — đổi sang máy chủ tương thích OpenAI khác bằng ô địa chỉ bên dưới.</span></label>
+      <label>Địa chỉ máy chủ (tùy chọn, chỉ dùng với provider OpenAI) <input id="f-baseurl" type="text" size="44" placeholder="https://api.groq.com/openai">
+        <span class="muted">Để trống = dùng mặc định của hãng (api.openai.com). Điền https://api.groq.com/openai để gọi Groq qua API tương thích OpenAI. Chỉ nhận https và máy chủ api.openai.com hoặc api.groq.com.</span></label>
       <label>API key <input id="f-apikey" type="password" size="44" autocomplete="off">
         <span class="muted">Key của hãng model, dán nguyên văn. Key được lưu trong file riêng quyền 0600 trên hub, không hiện lại ở bất kỳ đâu sau khi lưu.</span></label>
       <label>Danh sách model <textarea id="f-models" rows="4" style="width:100%"></textarea>
@@ -532,7 +534,7 @@ async function refreshAgents() {
       `<td>${a.online ? '<span class="on">online</span>' : '<span class="off">offline</span>'}</td>` +
       `<td>${a.pending} chờ / ${a.leases} lease</td>` +
       `<td>${a.token_configured ? "đã có (" + a.token_length + " ký tự)" : "CHƯA CÓ"}</td>` +
-      `<td>${isApi ? "API" + (a.api ? `<br><span class="muted">${esc(a.api.provider)} · ${a.api.models.length} model · ${a.api.has_key ? "đã có key" : "CHƯA CÓ KEY"}</span>` : `<br><span class="muted">chưa có cấu hình API</span>`) : "SSH"}</td>` +
+      `<td>${isApi ? "API" + (a.api ? `<br><span class="muted">${esc(a.api.provider)} · ${a.api.models.length} model · ${a.api.has_key ? "đã có key" : "CHƯA CÓ KEY"}${a.api.base_url ? " · " + esc(a.api.base_url) : ""}</span>` : `<br><span class="muted">chưa có cấu hình API</span>`) : "SSH"}</td>` +
       `<td class="row-actions"></td>`;
     const cell = tr.querySelector(".row-actions");
     const mk = (label, fn) => { const b = document.createElement("button"); b.textContent = label; b.onclick = fn; cell.appendChild(b); };
@@ -824,6 +826,7 @@ function openAgentDialog(a) {
   $("f-kind").value = "ssh";
   $("f-provider").value = "gemini";
   $("f-apikey").value = "";
+  $("f-baseurl").value = "";
   $("f-models").value = "";
   $("f-api-block").style.display = "none";
   $("f-kind").onchange = syncApiBlock;
@@ -859,6 +862,7 @@ function openAgentDialog(a) {
           headers = stepUpHeaders(); if (!headers) return;
           payload.provider = $("f-provider").value;
           payload.api_key = $("f-apikey").value.trim();
+          payload.base_url = $("f-baseurl").value.trim();
           payload.models = $("f-models").value.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
         }
         await api("POST", "/api/agents", payload, headers);

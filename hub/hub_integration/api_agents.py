@@ -49,6 +49,7 @@ class ApiAgentsStore:
                         agents[key] = {
                             "provider": cfg.get("provider", ""),
                             "models": list(cfg.get("models") or []),
+                            "base_url": cfg.get("base_url") or None,
                             "updated_at": cfg.get("updated_at"),
                         }
             except (OSError, ValueError):
