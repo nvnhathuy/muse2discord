@@ -184,6 +184,25 @@
             <li>Bấm nút “SSH key” ở dòng của agent, dán public key vào — trang tự thêm key lên VM điều phối và hiện fingerprint + thời gian đã thêm ngay trong hộp thoại.</li>
             <li>Agent mới mặc định ở trạng thái Tạm dừng: bấm “Mở lại” thì agent mới bắt đầu nhận tin. Điểm danh thử trong phòng để xác nhận agent trả lời được.</li>
           </ol></li>
+        <li><strong>Tạo bot Discord và thêm agent — chi tiết từng bước:</strong> bản chi tiết của việc tạo bot và quy trình 5 bước ở trên — làm lần lượt, không bỏ bước.
+          <ol>
+            <li><strong>Tạo ứng dụng trong Discord Developer Portal:</strong> mở đúng địa chỉ <code>https://discord.com/developers/applications</code>, đăng nhập, bấm “New Application”, đặt tên cho ứng dụng rồi bấm Create.</li>
+            <li><strong>Bật intent và lấy token bot:</strong> vào mục Bot, ở khối “Privileged Gateway Intents” bật <strong>MESSAGE CONTENT INTENT</strong> — thiếu intent này bot nhận được tin nhưng không đọc được nội dung tin, hub coi như không có tin. Bấm “Reset Token” để lấy token bot. <em>Token là bí mật, tương đương mật khẩu của bot:</em> chỉ dán vào đúng ô “Token bot” của trang này; tuyệt đối không gửi token qua phòng chat, không chụp màn hình có token; lỡ lộ thì bấm “Reset Token” lại ngay — token cũ chết ngay lập tức, dùng token mới vừa tạo. (Đoạn đầu của token bot là mã base64 của bot user id — bản thân id thì không bí mật, cả chuỗi token mới là bí mật.)</li>
+            <li><strong>Lấy bot user id và username:</strong> mở trang “General Information” của ứng dụng — số “Application ID” chính là bot user id cần điền vào trang này. Cách khác: trong Discord, bật Developer Mode (Cài đặt → Nâng cao → Developer Mode) rồi chép ID của bot trong danh sách thành viên của server. Username của bot xem ở mục Bot trong Portal.</li>
+            <li><strong>Mời bot vào server:</strong> vào mục OAuth2 → URL Generator, tích scope <code>bot</code>, rồi ở bảng quyền tích đúng các quyền: View Channel, Send Messages, Read Message History, Add Reactions, Embed Links, Attach Files — KHÔNG tích Administrator, KHÔNG tích Manage Server / Manage Channels, bot chỉ cần đọc và gửi tin. Mở link được sinh ở cuối trang, chọn server và xác nhận mời. Sau khi bot vào server, kiểm tra thêm quyền theo kênh: trong từng kênh bot sẽ làm việc, bot phải xem và gửi được tin ở kênh đó (kênh riêng tư phải cấp quyền riêng cho bot).</li>
+            <li><strong>Điền form “+ Thêm agent” — từng ô một:</strong>
+              <ul>
+                <li><em>Agent id:</em> tên máy của ghế — chỉ chữ thường không dấu, số và dấu gạch ngang; không khoảng trắng; không trùng agent khác; KHÔNG đổi được sau khi tạo. Id đặt tên cho cái ghế, không phải tài khoản ngồi vào — sau này đổi tài khoản hay model sau lưng ghế thì id vẫn giữ nguyên.</li>
+                <li><em>Tên hiển thị:</em> tên người trong phòng nhìn thấy; sửa được bất cứ lúc nào.</li>
+                <li><em>Discord bot user id:</em> số Application ID lấy ở bước trên.</li>
+                <li><em>Username bot:</em> username xem ở mục Bot trong Portal.</li>
+                <li><em>Các dạng gọi tên:</em> các tên dùng để gọi agent trong phòng, phân tách bằng dấu phẩy; thường đặt trùng agent id.</li>
+                <li><em>Loại agent:</em> “SSH — agent có máy riêng, nối hub qua cầu” là ghế agent sống có máy riêng; “API — hub tự chạy bằng API key của hãng model” là agent chạy ngay trong hub — chọn loại này thì điền thêm khối API key bên dưới.</li>
+                <li><em>Nhận tin “tất cả”:</em> để trống, không tích — trừ khi agent bắt buộc phải nghe các lời gọi chung cả phòng.</li>
+                <li><em>Token bot:</em> dán token bot đã lấy ở trên vào ô này — đây là nơi duy nhất token thuộc về.</li>
+              </ul></li>
+            <li><strong>Sau khi tạo:</strong> hub tự nạp nóng agent mới, không cần khởi động lại. Agent mới mặc định ở trạng thái Tạm dừng: bấm “Mở lại” ở dòng của agent thì agent mới bắt đầu nhận tin. Điểm danh thử trong kênh của agent để xác nhận agent trả lời được.</li>
+          </ol></li>
         <li><strong>Luật cứng:</strong> mục Luật cứng trong trang này là nơi lưu luật phòng chính thức — luật sống trên server của hub, có số phiên bản tăng thêm 1 mỗi lần thêm/sửa/xoá. Admin hoặc agent giữ quyền tạm mức full thì thêm/sửa/xoá được; quyền tạm mức khác chỉ xem. Thêm luật xong, chỉ cần thông báo trong phòng “tất cả agent vào đọc luật cứng trong file laws.json trên hub (đường dẫn /data/registry/laws.json) bằng lệnh bridge laws, cập nhật và ghi vào bộ nhớ dài hạn”. Nút “Prompt thông báo luật” trong mục Luật cứng có sẵn đúng câu thông báo mẫu để chép dán vào phòng.</li>
         <li><strong>Tạm dừng 2 mức:</strong> mức hub (nút Tạm dừng trong trang) chặn định tuyến ngay lập tức, bot vẫn online trong phòng; mức agent do phía agent tự dừng, hub không can thiệp.</li>
         <li><strong>Quyền tạm:</strong> chỉ admin mới được cấp và thu hồi. Grant mức full có toàn quyền như admin, TRỪ quyền cấp grant. Token chỉ hiện đúng 1 lần lúc cấp — hãy đưa ngay cho agent. Thu hồi có hiệu lực ngay lập tức.</li>
