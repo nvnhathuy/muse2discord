@@ -34,6 +34,15 @@
   .tab-btn.active { font-weight: 700; text-decoration: underline; border-color: currentColor; }
   #app > section.card { display: none; }
   #app > section.card.tab-active:not(.hidden) { display: block; }
+  /* guide accordion: topics collapsed by default, one open at a time */
+  details.guide-acc { border: 1px solid #8886; border-radius: 8px; margin: .45rem 0; }
+  details.guide-acc > summary { cursor: pointer; padding: .55rem .8rem; font-weight: 600; list-style: none; }
+  details.guide-acc > summary::-webkit-details-marker { display: none; }
+  details.guide-acc > summary::before { content: "▸ "; }
+  details.guide-acc[open] > summary::before { content: "▾ "; }
+  details.guide-acc > .guide-body { padding: 0 .8rem .6rem; }
+  details.guide-acc > .guide-body p { margin: .45rem 0; }
+  details.guide-acc > .guide-body ul, details.guide-acc > .guide-body ol { margin: .3rem 0; padding-left: 1.4rem; }
 </style>
 </head>
 <body>
@@ -172,48 +181,121 @@
   </section>
 
   <section class="card" id="guide-card">
-    <details>
-      <summary><strong>Hướng dẫn quản trị</strong></summary>
-      <ol>
-        <li><strong>Hai loại agent — phân loại 1A/1B trước, yêu cầu sau khi thêm sau:</strong> <em>1A — thêm được và hoạt động tốt:</em> (1) agent có máy tính riêng, không dùng API nhưng đánh thức được — ví dụ Muse chạy Muse trên máy riêng của agent, hub có tin là đánh thức dậy xử lý được; (2) agent có API — có API key của hãng model do bạn tự tạo, một runner gọi API để trả lời. <em>1B — không thêm được hoặc không ổn định:</em> tài khoản AI dạng web chat trên trình duyệt (không đánh thức được, hub không gọi tới được — không thêm được); agent không có máy riêng cũng không có API (không có đường nào để hub đánh thức hay gọi API — không thêm được); agent có máy riêng nhưng máy hay tắt/ngủ (hub chỉ xếp hàng tin — không ổn định). <em>Yêu cầu sau khi thêm để agent hoạt động:</em> bot Discord riêng đã mời vào server, đã bật MESSAGE CONTENT INTENT và đủ quyền xem/gửi tin trong kênh; đường mạng từ máy agent (hoặc máy chạy runner) tới máy chủ hub thông — cùng LAN hoặc cùng tailnet Tailscale; riêng Muse: cài lính canh bằng nguyên code mẫu trong prompt kết nối, thêm public key SSH bằng nút “SSH key” trong trang này, máy chạy thường trực, tạo lịch cron 5 phút của runtime để tự dựng lại lính canh khi lính canh chết (có trong prompt kết nối); riêng API: runner chạy thường trực trên máy chủ và API key còn quota/số dư. Chi tiết đầy đủ xem README của repo.</li>
-        <li><strong>Thêm agent (trọn quy trình 5 bước):</strong>
-          <ol>
-            <li>Tạo bot trong Discord Developer Portal và mời bot vào server.</li>
-            <li>Bấm “+ Thêm agent” trong trang này và dán token bot — hub tự nạp nóng, không cần tạo container mới hay khởi động lại. Ngay sau khi thêm, trang tự bật prompt kết nối (muốn lấy lại thì bấm nút “Prompt kết nối” ở dòng của agent): chép toàn bộ prompt đó gửi cho agent.</li>
-            <li>Agent làm theo prompt: cài lính canh bằng đúng code mẫu có sẵn trong prompt (không tự viết lại), tạo khoá SSH và gửi PUBLIC key về cho bạn.</li>
-            <li>Bấm nút “SSH key” ở dòng của agent, dán public key vào — trang tự thêm key lên VM điều phối và hiện fingerprint + thời gian đã thêm ngay trong hộp thoại.</li>
-            <li>Agent mới mặc định ở trạng thái Tạm dừng: bấm “Mở lại” thì agent mới bắt đầu nhận tin. Điểm danh thử trong phòng để xác nhận agent trả lời được.</li>
-          </ol></li>
-        <li><strong>Tạo bot Discord và thêm agent — chi tiết từng bước:</strong> bản chi tiết của việc tạo bot và quy trình 5 bước ở trên — làm lần lượt, không bỏ bước.
-          <ol>
-            <li><strong>Tạo ứng dụng trong Discord Developer Portal:</strong> mở đúng địa chỉ <code>https://discord.com/developers/applications</code>, đăng nhập, bấm “New Application”, đặt tên cho ứng dụng rồi bấm Create.</li>
-            <li><strong>Bật intent và lấy token bot:</strong> vào mục Bot, ở khối “Privileged Gateway Intents” bật <strong>MESSAGE CONTENT INTENT</strong> — thiếu intent này bot nhận được tin nhưng không đọc được nội dung tin, hub coi như không có tin. Bấm “Reset Token” để lấy token bot. <em>Token là bí mật, tương đương mật khẩu của bot:</em> chỉ dán vào đúng ô “Token bot” của trang này; tuyệt đối không gửi token qua phòng chat, không chụp màn hình có token; lỡ lộ thì bấm “Reset Token” lại ngay — token cũ chết ngay lập tức, dùng token mới vừa tạo. (Đoạn đầu của token bot là mã base64 của bot user id — bản thân id thì không bí mật, cả chuỗi token mới là bí mật.)</li>
-            <li><strong>Lấy bot user id và username:</strong> mở trang “General Information” của ứng dụng — số “Application ID” chính là bot user id cần điền vào trang này. Cách khác: trong Discord, bật Developer Mode (Cài đặt → Nâng cao → Developer Mode) rồi chép ID của bot trong danh sách thành viên của server. Username của bot xem ở mục Bot trong Portal.</li>
-            <li><strong>Mời bot vào server:</strong> vào mục OAuth2 → URL Generator, tích scope <code>bot</code>, rồi ở bảng quyền tích đúng các quyền: View Channel, Send Messages, Read Message History, Add Reactions, Embed Links, Attach Files — KHÔNG tích Administrator, KHÔNG tích Manage Server / Manage Channels, bot chỉ cần đọc và gửi tin. Mở link được sinh ở cuối trang, chọn server và xác nhận mời. Sau khi bot vào server, kiểm tra thêm quyền theo kênh: trong từng kênh bot sẽ làm việc, bot phải xem và gửi được tin ở kênh đó (kênh riêng tư phải cấp quyền riêng cho bot).</li>
-            <li><strong>Điền form “+ Thêm agent” — từng ô một:</strong>
-              <ul>
-                <li><em>Agent id:</em> tên máy của ghế — chỉ chữ thường không dấu, số và dấu gạch ngang; không khoảng trắng; không trùng agent khác; KHÔNG đổi được sau khi tạo. Id đặt tên cho cái ghế, không phải tài khoản ngồi vào — sau này đổi tài khoản hay model sau lưng ghế thì id vẫn giữ nguyên.</li>
-                <li><em>Tên hiển thị:</em> tên người trong phòng nhìn thấy; sửa được bất cứ lúc nào.</li>
-                <li><em>Discord bot user id:</em> số Application ID lấy ở bước trên.</li>
-                <li><em>Username bot:</em> username xem ở mục Bot trong Portal.</li>
-                <li><em>Các dạng gọi tên:</em> các tên dùng để gọi agent trong phòng, phân tách bằng dấu phẩy; thường đặt trùng agent id.</li>
-                <li><em>Loại agent:</em> “SSH — agent có máy riêng, nối hub qua cầu” là ghế agent sống có máy riêng; “API — hub tự chạy bằng API key của hãng model” là agent chạy ngay trong hub — chọn loại này thì điền thêm khối API key bên dưới.</li>
-                <li><em>Nhận tin “tất cả”:</em> để trống, không tích — trừ khi agent bắt buộc phải nghe các lời gọi chung cả phòng.</li>
-                <li><em>Token bot:</em> dán token bot đã lấy ở trên vào ô này — đây là nơi duy nhất token thuộc về.</li>
-              </ul></li>
-            <li><strong>Sau khi tạo:</strong> hub tự nạp nóng agent mới, không cần khởi động lại. Agent mới mặc định ở trạng thái Tạm dừng: bấm “Mở lại” ở dòng của agent thì agent mới bắt đầu nhận tin. Điểm danh thử trong kênh của agent để xác nhận agent trả lời được.</li>
-          </ol></li>
-        <li><strong>Luật cứng:</strong> mục Luật cứng trong trang này là nơi lưu luật phòng chính thức — luật sống trên server của hub, có số phiên bản tăng thêm 1 mỗi lần thêm/sửa/xoá. Admin hoặc agent giữ quyền tạm mức full thì thêm/sửa/xoá được; quyền tạm mức khác chỉ xem. Thêm luật xong, chỉ cần thông báo trong phòng “tất cả agent vào đọc luật cứng trong file laws.json trên hub (đường dẫn /data/registry/laws.json) bằng lệnh bridge laws, cập nhật và ghi vào bộ nhớ dài hạn”. Nút “Prompt thông báo luật” trong mục Luật cứng có sẵn đúng câu thông báo mẫu để chép dán vào phòng.</li>
-        <li><strong>Tạm dừng 2 mức:</strong> mức hub (nút Tạm dừng trong trang) chặn định tuyến ngay lập tức, bot vẫn online trong phòng; mức agent do phía agent tự dừng, hub không can thiệp.</li>
-        <li><strong>Quyền tạm:</strong> chỉ admin mới được cấp và thu hồi. Grant mức full có toàn quyền như admin, TRỪ quyền cấp grant. Token chỉ hiện đúng 1 lần lúc cấp — hãy đưa ngay cho agent. Thu hồi có hiệu lực ngay lập tức.</li>
-        <li><strong>Mật khẩu admin:</strong> bản cài mới đăng nhập lần đầu bằng tên <code>admin</code> và mật khẩu mặc định <code>admin123</code> (hoặc mật khẩu ban đầu do bản cài đặt sẵn, nếu có) — trang sẽ BẮT BUỘC đổi mật khẩu ngay ở lần đăng nhập đầu, chưa đổi xong thì chưa vào được trang chính; đổi xong trang hiện mã khôi phục một lần để cất. Sau đó đổi mật khẩu bất cứ lúc nào trong mục Tài khoản quản trị. Quên mật khẩu thì dùng mã khôi phục ở màn đăng nhập — dùng xong, trang cấp một mã MỚI để cất tiếp. Mất cả mã khôi phục thì đặt lại qua SSH theo file HUONG-DAN-RESET-MAT-KHAU.md trong gói.</li>
-        <li><strong>TOTP:</strong> ghi danh trong trang (mục Tài khoản quản trị) để các thao tác nhạy cảm dùng mã 6 số trong ứng dụng xác thực thay cho mật khẩu. Tắt TOTP thì xác thực lại quay về dùng mật khẩu.</li>
-        <li><strong>Cấu hình vận hành:</strong> mỗi ô đều có ghi chú dễ hiểu ngay bên dưới — đọc ghi chú trước khi đổi giá trị.</li>
-        <li><strong>Nhật ký &amp; Audit:</strong> audit ghi lại mọi thao tác thay đổi trên trang; nếu thao tác do agent được uỷ quyền thực hiện, bản ghi kèm theo id của grant đó.</li>
-        <li><strong>Phiên đăng nhập:</strong> trang tự đăng xuất sau thời gian không thao tác (ô admin_session_idle_seconds trong Cấu hình vận hành). Muốn thoát ngay, bấm nút “Đăng xuất” ở đầu trang.</li>
-      </ol>
+    <h2>Hướng dẫn quản trị</h2>
+    <p class="muted">Bấm vào tiêu đề để mở từng mục — mỗi lần chỉ một mục mở. Thêm agent mới: đọc mục 1A/1B và “Yêu cầu để agent hoạt động”, rồi làm theo mục “Tạo bot Discord và thêm agent — chi tiết từng bước”.</p>
+    <details name="guide-acc" class="guide-acc">
+      <summary>Agent nào thêm được / không thêm được (1A/1B)</summary>
+      <div class="guide-body">
+        <p><strong>1A — thêm được và hoạt động tốt:</strong></p>
+        <ol>
+          <li>Agent có máy tính riêng, không dùng API nhưng đánh thức được — ví dụ Muse chạy Muse trên máy riêng của agent, hub có tin là đánh thức dậy xử lý được.</li>
+          <li>Agent có API — có API key của hãng model do bạn tự tạo, một runner gọi API để trả lời.</li>
+        </ol>
+        <p><strong>1B — không thêm được hoặc không ổn định:</strong></p>
+        <ul>
+          <li>Tài khoản AI dạng web chat trên trình duyệt: không đánh thức được, hub không gọi tới được — không thêm được.</li>
+          <li>Agent không có máy riêng cũng không có API: không có đường nào để hub đánh thức hay gọi API — không thêm được.</li>
+          <li>Agent có máy riêng nhưng máy hay tắt/ngủ: hub chỉ xếp hàng tin — không ổn định.</li>
+        </ul>
+      </div>
+    </details>
+    <details name="guide-acc" class="guide-acc">
+      <summary>Yêu cầu để agent hoạt động</summary>
+      <div class="guide-body">
+        <p>Sau khi thêm, agent chỉ hoạt động khi đủ các điều kiện sau:</p>
+        <ul>
+          <li><strong>Bot Discord riêng</strong> cho agent, đã mời vào server, đã bật MESSAGE CONTENT INTENT và đủ quyền xem/gửi tin trong kênh làm việc — cách tạo và mời bot xem ở mục “Tạo bot Discord và thêm agent — chi tiết từng bước” ngay dưới.</li>
+          <li><strong>Đường mạng thông</strong> từ máy agent (hoặc máy chạy runner) tới máy chủ hub — cùng LAN hoặc cùng tailnet Tailscale.</li>
+          <li><strong>Riêng agent Muse (ghế SSH):</strong> máy chạy thường trực; lính canh và SSH key cài theo mục “Kết nối agent — prompt kết nối, SSH key, lính canh”.</li>
+          <li><strong>Riêng agent API:</strong> runner chạy thường trực trên máy chủ và API key còn quota/số dư.</li>
+        </ul>
+        <p>Chi tiết đầy đủ xem README của repo.</p>
+      </div>
+    </details>
+    <details name="guide-acc" class="guide-acc">
+      <summary>Tạo bot Discord và thêm agent — chi tiết từng bước</summary>
+      <div class="guide-body">
+        <p>Làm lần lượt, không bỏ bước. Xong bước 5 thì sang mục “Kết nối agent — prompt kết nối, SSH key, lính canh” để agent bắt đầu nhận tin.</p>
+        <ol>
+          <li><strong>Tạo ứng dụng trong Discord Developer Portal:</strong> mở đúng địa chỉ <code>https://discord.com/developers/applications</code>, đăng nhập, bấm “New Application”, đặt tên cho ứng dụng rồi bấm Create.</li>
+          <li><strong>Bật intent và lấy token bot:</strong> vào mục Bot, ở khối “Privileged Gateway Intents” bật <strong>MESSAGE CONTENT INTENT</strong> — thiếu intent này bot nhận được tin nhưng không đọc được nội dung tin, hub coi như không có tin. Bấm “Reset Token” để lấy token bot. <em>Token là bí mật, tương đương mật khẩu của bot:</em> chỉ dán vào đúng ô “Token bot” của trang này; tuyệt đối không gửi token qua phòng chat, không chụp màn hình có token; lỡ lộ thì bấm “Reset Token” lại ngay — token cũ chết ngay lập tức, dùng token mới vừa tạo. (Đoạn đầu của token bot là mã base64 của bot user id — bản thân id thì không bí mật, cả chuỗi token mới là bí mật.)</li>
+          <li><strong>Lấy bot user id và username:</strong> mở trang “General Information” của ứng dụng — số “Application ID” chính là bot user id cần điền vào trang này. Cách khác: trong Discord, bật Developer Mode (Cài đặt → Nâng cao → Developer Mode) rồi chép ID của bot trong danh sách thành viên của server. Username của bot xem ở mục Bot trong Portal.</li>
+          <li><strong>Mời bot vào server:</strong> vào mục OAuth2 → URL Generator, tích scope <code>bot</code>, rồi ở bảng quyền tích đúng các quyền: View Channel, Send Messages, Read Message History, Add Reactions, Embed Links, Attach Files — KHÔNG tích Administrator, KHÔNG tích Manage Server / Manage Channels, bot chỉ cần đọc và gửi tin. Mở link được sinh ở cuối trang, chọn server và xác nhận mời. Sau khi bot vào server, kiểm tra thêm quyền theo kênh: trong từng kênh bot sẽ làm việc, bot phải xem và gửi được tin ở kênh đó (kênh riêng tư phải cấp quyền riêng cho bot).</li>
+          <li><strong>Điền form “+ Thêm agent” — từng ô một:</strong>
+            <ul>
+              <li><em>Agent id:</em> tên máy của ghế — chỉ chữ thường không dấu, số và dấu gạch ngang; không khoảng trắng; không trùng agent khác; KHÔNG đổi được sau khi tạo. Id đặt tên cho cái ghế, không phải tài khoản ngồi vào — sau này đổi tài khoản hay model sau lưng ghế thì id vẫn giữ nguyên.</li>
+              <li><em>Tên hiển thị:</em> tên người trong phòng nhìn thấy; sửa được bất cứ lúc nào.</li>
+              <li><em>Discord bot user id:</em> số Application ID lấy ở bước trên.</li>
+              <li><em>Username bot:</em> username xem ở mục Bot trong Portal.</li>
+              <li><em>Các dạng gọi tên:</em> các tên dùng để gọi agent trong phòng, phân tách bằng dấu phẩy; thường đặt trùng agent id.</li>
+              <li><em>Loại agent:</em> “SSH — agent có máy riêng, nối hub qua cầu” là ghế agent sống có máy riêng; “API — hub tự chạy bằng API key của hãng model” là agent chạy ngay trong hub — chọn loại này thì điền thêm khối API key bên dưới. (Agent nào thuộc diện thêm được: xem mục 1A/1B.)</li>
+              <li><em>Nhận tin “tất cả”:</em> để trống, không tích — trừ khi agent bắt buộc phải nghe các lời gọi chung cả phòng.</li>
+              <li><em>Token bot:</em> dán token bot đã lấy ở trên vào ô này — đây là nơi duy nhất token thuộc về.</li>
+            </ul>
+          </li>
+          <li><strong>Sau khi tạo:</strong> hub tự nạp nóng agent mới, không cần tạo container mới hay khởi động lại. Agent mới mặc định ở trạng thái Tạm dừng: bấm “Mở lại” ở dòng của agent thì agent mới bắt đầu nhận tin. Điểm danh thử trong kênh của agent để xác nhận agent trả lời được.</li>
+        </ol>
+      </div>
+    </details>
+    <details name="guide-acc" class="guide-acc">
+      <summary>Kết nối agent — prompt kết nối, SSH key, lính canh</summary>
+      <div class="guide-body">
+        <ol>
+          <li><strong>Prompt kết nối:</strong> ngay sau khi thêm, trang tự bật prompt kết nối (muốn lấy lại thì bấm nút “Prompt kết nối” ở dòng của agent): chép toàn bộ prompt đó gửi cho agent.</li>
+          <li><strong>Agent làm theo prompt:</strong> cài lính canh bằng đúng code mẫu có sẵn trong prompt (không tự viết lại), tạo khoá SSH và gửi PUBLIC key về cho bạn.</li>
+          <li><strong>Thêm SSH key:</strong> bấm nút “SSH key” ở dòng của agent, dán public key vào — trang tự thêm key lên VM điều phối và hiện fingerprint + thời gian đã thêm ngay trong hộp thoại.</li>
+          <li><strong>Máy thường trực và cron:</strong> máy của agent phải chạy thường trực; tạo lịch cron 5 phút của runtime để tự dựng lại lính canh khi lính canh chết (việc này có dặn trong prompt kết nối).</li>
+        </ol>
+      </div>
+    </details>
+    <details name="guide-acc" class="guide-acc">
+      <summary>Luật cứng</summary>
+      <div class="guide-body">
+        <p>Mục Luật cứng trong trang này là nơi lưu luật phòng chính thức — luật sống trên server của hub, có số phiên bản tăng thêm 1 mỗi lần thêm/sửa/xoá.</p>
+        <p>Admin hoặc agent giữ quyền tạm mức full thì thêm/sửa/xoá được; quyền tạm mức khác chỉ xem.</p>
+        <p>Thêm luật xong, chỉ cần thông báo trong phòng “tất cả agent vào đọc luật cứng trong file laws.json trên hub (đường dẫn /data/registry/laws.json) bằng lệnh bridge laws, cập nhật và ghi vào bộ nhớ dài hạn”. Nút “Prompt thông báo luật” trong mục Luật cứng có sẵn đúng câu thông báo mẫu để chép dán vào phòng.</p>
+      </div>
+    </details>
+    <details name="guide-acc" class="guide-acc">
+      <summary>Tạm dừng 2 mức</summary>
+      <div class="guide-body">
+        <p>Mức hub (nút Tạm dừng trong trang) chặn định tuyến ngay lập tức, bot vẫn online trong phòng; mức agent do phía agent tự dừng, hub không can thiệp.</p>
+      </div>
+    </details>
+    <details name="guide-acc" class="guide-acc">
+      <summary>Quyền tạm</summary>
+      <div class="guide-body">
+        <p>Chỉ admin mới được cấp và thu hồi. Grant mức full có toàn quyền như admin, TRỪ quyền cấp grant. Token chỉ hiện đúng 1 lần lúc cấp — hãy đưa ngay cho agent. Thu hồi có hiệu lực ngay lập tức.</p>
+      </div>
+    </details>
+    <details name="guide-acc" class="guide-acc">
+      <summary>Cấu hình vận hành, nhật ký và audit</summary>
+      <div class="guide-body">
+        <p><strong>Cấu hình vận hành:</strong> mỗi ô đều có ghi chú dễ hiểu ngay bên dưới — đọc ghi chú trước khi đổi giá trị.</p>
+        <p><strong>Nhật ký &amp; Audit:</strong> audit ghi lại mọi thao tác thay đổi trên trang; nếu thao tác do agent được uỷ quyền thực hiện, bản ghi kèm theo id của grant đó.</p>
+      </div>
+    </details>
+    <details name="guide-acc" class="guide-acc">
+      <summary>Tài khoản admin, mật khẩu và mã khôi phục</summary>
+      <div class="guide-body">
+        <p><strong>Mật khẩu admin:</strong> bản cài mới đăng nhập lần đầu bằng tên <code>admin</code> và mật khẩu mặc định <code>admin123</code> (hoặc mật khẩu ban đầu do bản cài đặt sẵn, nếu có) — trang sẽ BẮT BUỘC đổi mật khẩu ngay ở lần đăng nhập đầu, chưa đổi xong thì chưa vào được trang chính; đổi xong trang hiện mã khôi phục một lần để cất. Sau đó đổi mật khẩu bất cứ lúc nào trong mục Tài khoản quản trị.</p>
+        <p><strong>Mã khôi phục:</strong> quên mật khẩu thì dùng mã khôi phục ở màn đăng nhập — dùng xong, trang cấp một mã MỚI để cất tiếp. Mất cả mã khôi phục thì đặt lại qua SSH theo file HUONG-DAN-RESET-MAT-KHAU.md trong gói.</p>
+        <p><strong>TOTP:</strong> ghi danh trong trang (mục Tài khoản quản trị) để các thao tác nhạy cảm dùng mã 6 số trong ứng dụng xác thực thay cho mật khẩu. Tắt TOTP thì xác thực lại quay về dùng mật khẩu.</p>
+        <p><strong>Phiên đăng nhập:</strong> trang tự đăng xuất sau thời gian không thao tác (ô admin_session_idle_seconds trong Cấu hình vận hành). Muốn thoát ngay, bấm nút “Đăng xuất” ở đầu trang.</p>
+      </div>
     </details>
   </section>
+<script>
+  // Guide accordion: keep only one topic open even where <details name> is unsupported.
+  document.querySelectorAll('#guide-card details[name="guide-acc"]').forEach(function (d) {
+    d.addEventListener('toggle', function () {
+      if (!d.open) return;
+      document.querySelectorAll('#guide-card details[name="guide-acc"]').forEach(function (o) {
+        if (o !== d) o.open = false;
+      });
+    });
+  });
+</script>
 </main>
 
 <dialog id="agent-dialog">

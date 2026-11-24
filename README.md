@@ -261,6 +261,9 @@ biệt đó, mọi bước triển khai đều như bản một máy.
 
 ### Loại agent nào thêm được — phân loại 1A / 1B
 
+<details>
+<summary>Bấm để mở nội dung</summary>
+
 Thêm được hay không phụ thuộc vào **loại agent** — hãy phân loại
 trước, trước khi làm bất cứ bước triển khai nào khác. Phần này
 chỉ phân loại theo bản chất của agent; các yêu cầu vận hành sau
@@ -290,7 +293,12 @@ nên thêm:**
    xếp hàng tin chờ, agent trả lời chập chờn — **không ổn
    định**.
 
+</details>
+
 ### Yêu cầu sau khi thêm để agent hoạt động
+
+<details>
+<summary>Bấm để mở nội dung</summary>
 
 Chỉ agent thuộc diện **1A** mới thêm được. Sau khi thêm, các yêu
 cầu dưới đây quyết định agent có hoạt động được hay không —
@@ -329,6 +337,8 @@ thiếu một yêu cầu là agent im lặng và hub không tự bù được.
 Không cần: cơ sở dữ liệu riêng, Redis, hay dịch vụ ngoài nào khác —
 toàn bộ trạng thái nằm trong thư mục dữ liệu `/data` của container.
 
+</details>
+
 ---
 
 ## 3. Triển khai mới hoàn toàn
@@ -349,14 +359,11 @@ trong `admin/`.)
 
 ### Bước 2 — Tạo bot và thu thập ID
 
-Với **mỗi agent**, trong [Discord Developer Portal](https://discord.com/developers/applications):
-
-1. New Application → mục **Bot** → Reset Token, lưu token lại (đây là
-   `<KEY>_BOT_TOKEN`, chỉ hiển thị một lần).
-2. Bật **MESSAGE CONTENT INTENT** (mục Bot → Privileged Gateway Intents).
-3. Mục **OAuth2 → URL Generator**: scope `bot`, quyền View Channel /
-   Read Message History / Send Messages / Add Reactions → mở link mời
-   bot vào server.
+Mỗi agent cần **một ứng dụng bot Discord riêng**. Cách tạo bot,
+bật intent, lấy token và mời bot vào server nằm trọn ở mục
+**“Tạo bot Discord và thêm agent — chi tiết từng bước”** bên
+dưới (phần A và B) — làm theo mục đó; ở bước này chỉ thu thập
+các ID cần cho file env.
 
 Thu thập các ID (bật Developer Mode trong Discord: Cài đặt → Nâng cao →
 Developer Mode, rồi chuột phải để chép ID):
@@ -503,33 +510,25 @@ máy điều phối), tóm tắt 4 việc — toàn văn
 Nhờ ràng buộc này, khoá của hub trên máy chủ **chỉ thêm được
 key**, không mở được shell, không làm được việc khác.
 
-### Bước 8 — Thêm agent trong trang (quy trình 5 bước)
+### Bước 8 — Thêm agent trong trang
 
 Nếu đã khai agent trong env ở bước 3 thì agent đã có mặt sẵn trong
 trang sau lần chạy đầu — chỉ cần dựng lính canh (bước 9) rồi bấm "Mở
-lại". Thêm agent **mới** thì làm ngay trong trang:
+lại". Thêm agent **mới** thì làm ngay trong trang theo mục **“Tạo bot
+Discord và thêm agent — chi tiết từng bước”** ngay dưới đây (phần A–E:
+tạo bot, mời bot, điền form, mở agent, kết nối agent).
 
 **Trước khi thêm, đối chiếu phân loại ở tiểu mục “Loại agent
 nào thêm được — phân loại 1A / 1B” (mục 2. Chuẩn bị)** — nhất
 là: agent dạng tài khoản web không thêm được.
 
-1. Tạo bot trong Discord Developer Portal và mời bot vào server
-   (như bước 2).
-2. Bấm **“+ Thêm agent”**, dán token bot — hub tự nạp nóng. Ngay sau
-   đó trang **tự bật prompt kết nối**: chép toàn bộ prompt gửi cho
-   agent (lấy lại bất cứ lúc nào bằng nút “Prompt kết nối” ở dòng của
-   agent).
-3. Agent làm theo prompt: cài lính canh bằng đúng code mẫu trong
-   prompt, tạo khoá SSH và gửi **PUBLIC key** về.
-4. Bấm nút **“SSH key”** ở dòng của agent, dán public key — trang tự
-   thêm key lên máy chủ và hiện fingerprint + thời gian đã thêm.
-5. Agent mới mặc định **Tạm dừng**: bấm **“Mở lại”** để agent bắt đầu
-   nhận tin.
-
 ### Tạo bot Discord và thêm agent — chi tiết từng bước
 
 Bản chi tiết của bước 2 (tạo bot) và bước 8 (thêm agent trong
 trang) — làm lần lượt, không bỏ bước.
+
+<details>
+<summary>Bấm để mở hướng dẫn chi tiết</summary>
 
 **A. Tạo ứng dụng và bot trong Discord Developer Portal**
 
@@ -604,6 +603,19 @@ Mở trang quản trị hub → mục Agent → **“+ Thêm agent”**, điền
    lại”** ở dòng của agent thì agent mới bắt đầu nhận tin.
 3. Điểm danh thử trong kênh của agent (gọi đúng dạng gọi tên
    đã đặt) và xác nhận agent trả lời được.
+
+**E. Kết nối agent (prompt kết nối và SSH key)**
+
+1. Ngay sau khi thêm, trang **tự bật prompt kết nối**: chép toàn
+   bộ prompt gửi cho agent (lấy lại bất cứ lúc nào bằng nút
+   “Prompt kết nối” ở dòng của agent).
+2. Agent làm theo prompt: cài lính canh bằng đúng code mẫu trong
+   prompt, tạo khoá SSH và gửi **PUBLIC key** về.
+3. Bấm nút **“SSH key”** ở dòng của agent, dán public key — trang
+   tự thêm key lên máy chủ và hiện fingerprint + thời gian đã
+   thêm ngay trong hộp thoại.
+
+</details>
 
 ### Bước 9 — Dựng lính canh phía agent
 
