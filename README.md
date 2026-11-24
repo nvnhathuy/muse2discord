@@ -526,6 +526,85 @@ là: agent dạng tài khoản web không thêm được.
 5. Agent mới mặc định **Tạm dừng**: bấm **“Mở lại”** để agent bắt đầu
    nhận tin.
 
+### Tạo bot Discord và thêm agent — chi tiết từng bước
+
+Bản chi tiết của bước 2 (tạo bot) và bước 8 (thêm agent trong
+trang) — làm lần lượt, không bỏ bước.
+
+**A. Tạo ứng dụng và bot trong Discord Developer Portal**
+
+1. Mở đúng địa chỉ https://discord.com/developers/applications,
+   đăng nhập, bấm **New Application**, đặt tên cho ứng dụng rồi
+   bấm Create.
+2. Vào mục **Bot** → khối **Privileged Gateway Intents**: bật
+   **MESSAGE CONTENT INTENT**. Thiếu intent này bot nhận được
+   tin nhưng **không đọc được nội dung tin**, hub coi như không
+   có tin.
+3. Cũng ở mục Bot, bấm **Reset Token** để lấy token bot. Token
+   là bí mật, tương đương mật khẩu của bot:
+   - Chỉ dán token vào đúng ô **Token bot** của trang quản trị
+     hub — đó là nơi duy nhất token thuộc về.
+   - Tuyệt đối không gửi token qua chat, không chụp màn hình có
+     token.
+   - Lỡ lộ token thì bấm **Reset Token** lại ngay: token cũ
+     chết ngay lập tức, dùng token mới vừa tạo.
+   - Ghi chú: đoạn đầu của token bot là mã base64 của bot user
+     id — bản thân id thì không bí mật, cả chuỗi token mới là
+     bí mật.
+4. Lấy **bot user id**: mở trang **General Information** của
+   ứng dụng — số **Application ID** chính là bot user id. Cách
+   khác: trong Discord, bật Developer Mode (Cài đặt → Nâng cao
+   → Developer Mode) rồi chép ID của bot trong danh sách thành
+   viên của server.
+5. Lấy **username bot**: xem ở mục Bot trong Portal.
+
+**B. Mời bot vào server**
+
+1. Vào mục **OAuth2 → URL Generator**, tích scope `bot`.
+2. Ở bảng quyền hiện ra, tích đúng các quyền sau: View Channel,
+   Send Messages, Read Message History, Add Reactions, Embed
+   Links, Attach Files. **Không** tích Administrator, **không**
+   tích Manage Server / Manage Channels — bot chỉ cần đọc và
+   gửi tin.
+3. Chép link được sinh ở cuối trang, mở link, chọn server và
+   xác nhận mời.
+4. Sau khi bot vào server, kiểm tra quyền theo kênh: trong từng
+   kênh bot sẽ làm việc, bot phải có quyền View Channel và Send
+   Messages ở kênh đó (quyền kênh ghi đè quyền server; kênh
+   riêng tư phải cấp quyền riêng cho bot).
+
+**C. Thêm agent trong trang quản trị hub — từng ô một**
+
+Mở trang quản trị hub → mục Agent → **“+ Thêm agent”**, điền:
+
+- **Agent id**: tên máy của ghế — chỉ chữ thường không dấu, số
+  và dấu gạch ngang; không khoảng trắng; không trùng agent
+  khác; **không đổi được sau khi tạo**. Id đặt tên cho *cái
+  ghế*, không phải tài khoản ngồi vào — sau này đổi tài khoản
+  hay model sau lưng ghế thì id vẫn giữ nguyên.
+- **Tên hiển thị**: tên người trong phòng nhìn thấy; sửa được
+  bất cứ lúc nào.
+- **Discord bot user id**: số Application ID lấy ở bước A.4.
+- **Username bot**: username lấy ở bước A.5.
+- **Các dạng gọi tên**: các tên dùng để gọi agent trong phòng,
+  phân tách bằng dấu phẩy; thường đặt trùng agent id.
+- **Loại agent**: `SSH` = ghế agent sống có máy riêng, nối hub
+  qua cầu (bridge); `API` = agent chạy ngay trong hub bằng API
+  key của hãng model (chọn loại này thì điền thêm khối API key
+  bên dưới).
+- **Nhận tin “tất cả”**: để trống (không tích), trừ khi agent
+  bắt buộc phải nghe các lời gọi chung cả phòng.
+- **Token bot**: dán token bot ở bước A.3 vào ô này.
+
+**D. Sau khi tạo**
+
+1. Hub tự nạp nóng agent mới — không cần khởi động lại hub hay
+   container.
+2. Agent mới mặc định ở trạng thái **Tạm dừng**: bấm **“Mở
+   lại”** ở dòng của agent thì agent mới bắt đầu nhận tin.
+3. Điểm danh thử trong kênh của agent (gọi đúng dạng gọi tên
+   đã đặt) và xác nhận agent trả lời được.
+
 ### Bước 9 — Dựng lính canh phía agent
 
 Trên máy của agent (chi tiết ở `agent/AGENT_SIDE.md`):
