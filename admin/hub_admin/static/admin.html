@@ -290,7 +290,7 @@
           <li><strong>Chạy container:</strong> mở <code>deploy-integrated/compose.yaml</code>, sửa dòng <code>ports</code> thành địa chỉ LAN hoặc Tailscale của máy chạy hub (trang quản trị chỉ nên lộ trên mạng nội bộ/VPN, không mở ra Internet), rồi chạy <code>docker compose -f deploy-integrated/compose.yaml up -d</code>. Volume <code>bridge-v2-data</code> (gắn vào <code>/data</code>) chứa nhật ký, registry agent, thông tin đăng nhập admin và khoá SSH riêng của hub — đây là thư mục phải sao lưu.</li>
           <li><strong>Đăng nhập lần đầu:</strong> mở <code>http://&lt;HUB_IP&gt;:8899</code>, đăng nhập bằng tên <code>admin</code> và mật khẩu <code>admin123</code> (hoặc giá trị <code>HUB_ADMIN_TOKEN</code> nếu đã đặt). Trang bắt buộc đổi mật khẩu ngay (ít nhất 8 ký tự, không trùng mật khẩu mặc định) — chưa đổi xong thì chưa vào được trang chính. Đổi xong, trang hiện mã khôi phục một lần: cất ngay vào trình quản lý mật khẩu.</li>
           <li><strong>Cài keydrop phía máy chủ (một lần, cho tính năng SSH key):</strong> tạo user <code>keydrop</code>, cài hai script <code>agent-key-intake</code> và <code>agent-key-install</code>, bật systemd unit <code>agent-key-install.path</code>, và ghi public key của hub vào authorized_keys của user keydrop với ràng buộc forced-command — toàn văn ở <code>deploy-integrated/keydrop/README.md</code> trong repo. Nhờ ràng buộc này, khoá của hub trên máy chủ chỉ thêm được key, không mở được shell.</li>
-          <li><strong>Thêm agent trong trang:</strong> agent đã khai trong env có mặt sẵn sau lần chạy đầu — chỉ cần dựng lính canh rồi bấm “Mở lại”. Thêm agent mới thì làm ngay trong trang theo mục “Tạo bot Discord và thêm agent” bên dưới.</li>
+          <li><strong>Thêm agent trong trang:</strong> agent đã khai trong env có mặt sẵn sau lần chạy đầu ở trạng thái ĐANG CHẠY — chỉ cần dựng lính canh là nhận tin, không cần bấm gì thêm. Thêm agent mới thì làm ngay trong trang theo mục “Tạo bot Discord và thêm agent” bên dưới (agent tạo trong trang mặc định ở trạng thái Tạm dừng, bấm “Mở lại” mới bắt đầu nhận tin).</li>
           <li><strong>Dựng lính canh phía agent và kiểm chứng:</strong> agent làm theo prompt kết nối (mục “Kết nối agent” bên dưới); xong thì điểm danh thử trong phòng để xác nhận agent trả lời được.</li>
         </ol>
       </div>
@@ -335,7 +335,7 @@
           <li><strong>Mời bot vào server:</strong> vào mục OAuth2 → URL Generator, tích scope <code>bot</code>, rồi ở bảng quyền tích đúng các quyền: View Channel, Send Messages, Read Message History, Add Reactions, Embed Links, Attach Files — KHÔNG tích Administrator, KHÔNG tích Manage Server / Manage Channels, bot chỉ cần đọc và gửi tin. Mở link được sinh ở cuối trang, chọn server và xác nhận mời. Sau khi bot vào server, kiểm tra thêm quyền theo kênh: trong từng kênh bot sẽ làm việc, bot phải xem và gửi được tin ở kênh đó (kênh riêng tư phải cấp quyền riêng cho bot).</li>
           <li><strong>Điền form “+ Thêm agent” — từng ô một:</strong>
             <ul>
-              <li><em>Agent id:</em> tên máy của ghế — chỉ chữ thường không dấu, số và dấu gạch ngang; không khoảng trắng; không trùng agent khác; KHÔNG đổi được sau khi tạo. Id đặt tên cho cái ghế, không phải tài khoản ngồi vào — sau này đổi tài khoản hay model sau lưng ghế thì id vẫn giữ nguyên.</li>
+              <li><em>Agent id:</em> tên máy của ghế — chỉ chữ thường không dấu, số, dấu gạch ngang và dấu gạch dưới (bắt đầu bằng chữ hoặc số); không khoảng trắng; không trùng agent khác; KHÔNG đổi được sau khi tạo. Id đặt tên cho cái ghế, không phải tài khoản ngồi vào — sau này đổi tài khoản hay model sau lưng ghế thì id vẫn giữ nguyên.</li>
               <li><em>Tên hiển thị:</em> tên người trong phòng nhìn thấy; sửa được bất cứ lúc nào.</li>
               <li><em>Discord bot user id:</em> số Application ID lấy ở bước trên.</li>
               <li><em>Username bot:</em> username xem ở mục Bot trong Portal.</li>
@@ -347,6 +347,23 @@
           </li>
           <li><strong>Sau khi tạo:</strong> hub tự nạp nóng agent mới, không cần tạo container mới hay khởi động lại. Agent mới mặc định ở trạng thái Tạm dừng: bấm “Mở lại” ở dòng của agent thì agent mới bắt đầu nhận tin. Điểm danh thử trong phòng để xác nhận agent trả lời được.</li>
         </ol>
+      </div>
+    </details>
+    <details name="guide-acc" class="guide-acc">
+      <summary>Thao tác với agent đã có</summary>
+      <div class="guide-body">
+        <p>Mọi thao tác dưới đây nằm ở cột Thao tác, ngay dòng của agent trong mục Tổng quan. Các nút nhạy cảm chỉ hiện với admin (hoặc agent giữ quyền tạm mức full) và đều phải xác thực lại (mật khẩu hoặc mã TOTP) trước khi chạy.</p>
+        <ul>
+          <li><strong>Sửa:</strong> nút “Sửa” mở hộp thoại sửa thông tin agent — tên hiển thị, các dạng gọi tên, thông tin bot; ghế API sửa thêm nhà cung cấp/model/base_url. Agent id và loại ghế chốt ngay lúc tạo, không đổi được.</li>
+          <li><strong>Tạm dừng / Mở lại:</strong> nút “Tạm dừng” chặn định tuyến tới agent ngay lập tức (bắt buộc nhập lý do, ghi vào audit); nút “Mở lại” cho agent nhận tin trở lại.</li>
+          <li><strong>Khoá / Mở khoá trong hub (nhạy cảm):</strong> nút “Khoá” / “Mở khoá” đổi trạng thái khoá trong hub của agent — khi bị khoá, khoá SSH hub cài cho agent chỉ chạy được lệnh cầu của chính agent đó.</li>
+          <li><strong>Thay token (nhạy cảm):</strong> nút “Thay token” nhập token bot mới (không hiển thị lại sau khi lưu) — dùng khi token cũ bị lộ hoặc bot được Reset Token trong Developer Portal.</li>
+          <li><strong>Đổi API key (nhạy cảm, chỉ ghế API):</strong> nút “Đổi API key” nhập API key mới của hãng model (không hiển thị lại sau khi lưu).</li>
+          <li><strong>SSH key (chỉ ghế SSH):</strong> nút “SSH key” mở hộp thoại thêm public key của agent lên VM điều phối — chi tiết ở mục “Kết nối agent” bên dưới.</li>
+          <li><strong>Prompt kết nối (chỉ ghế SSH):</strong> nút “Prompt kết nối” hiện lại prompt kết nối để chép gửi cho agent.</li>
+          <li><strong>Hàng chờ:</strong> nút “Hàng chờ” mở hàng chờ tin của đúng agent đó.</li>
+          <li><strong>Xoá cứng (nhạy cảm):</strong> nút “Xoá” xoá hẳn hồ sơ agent (journal/audit lịch sử vẫn giữ). Chỉ xoá được khi agent không còn tin chờ và không còn lease; phải gõ đúng agent id để xác nhận. Không khôi phục được.</li>
+        </ul>
       </div>
     </details>
     <details name="guide-acc" class="guide-acc">
@@ -375,7 +392,7 @@
         <p><strong>Khi agent không trả lời — kiểm tra nhanh:</strong></p>
         <ol>
           <li>Agent có đang bị Tạm dừng không (xem mục Tổng quan của trang);</li>
-          <li>Ngắt mạch chống lặp: sau số tin liên tiếp của agent (ô <code>circuit_breaker_peer_messages</code> trong Cấu hình vận hành) mà không có tin nào của chủ phòng, hub tạm ngừng chuyển tin của agent — chủ phòng đăng một tin bất kỳ vào phòng là mạch tự đặt lại;</li>
+          <li>Ngắt mạch chống lặp: sau 8 tin liên tiếp được chuyển tới agent mà không có tin nào của chủ phòng, hub ngừng chuyển tin TỚI agent đó (ngưỡng 8 là số cứng trong hub) — chủ phòng đăng một tin bất kỳ vào phòng là bộ đếm đặt lại;</li>
           <li>Mở mục Hàng chờ để xem tin đang kẹt ở bước nào: tin chưa lease là agent chưa nhận, tin đang lease là agent đã nhận nhưng chưa xác nhận xong. Lease kẹt thì bấm “Giải phóng lease”; tin cần bỏ qua hẳn thì dùng “Ack hộ” (thao tác nhạy cảm, phải xác thực lại).</li>
         </ol>
       </div>
@@ -383,7 +400,7 @@
     <details name="guide-acc" class="guide-acc">
       <summary>Quyền tạm</summary>
       <div class="guide-body">
-        <p>Chỉ admin mới được cấp và thu hồi. Grant mức full có toàn quyền như admin, TRỪ quyền cấp grant. Token chỉ hiện đúng 1 lần lúc cấp — hãy đưa ngay cho agent. Thu hồi có hiệu lực ngay lập tức.</p>
+        <p>Chỉ admin mới được cấp và thu hồi — kể cả agent giữ grant mức full cũng không cấp grant tiếp được. Ba mức quyền: <strong>read</strong> chỉ xem; <strong>operate</strong> xem + thao tác vận hành thường (tạm dừng/mở lại agent, sửa thông tin mô tả, giải phóng lease), không chạm được thao tác nhạy cảm; <strong>full</strong> toàn quyền như admin kể cả thao tác nhạy cảm, TRỪ quyền cấp/thu hồi grant. Grant có hạn dùng (mặc định 1 giờ, tối đa 24 giờ). Token chỉ hiện đúng 1 lần lúc cấp — hãy đưa ngay cho agent. Thu hồi có hiệu lực ngay lập tức.</p>
       </div>
     </details>
     <details name="guide-acc" class="guide-acc">
@@ -1257,7 +1274,7 @@ const OPS_NOTES = {
   lease_max_seconds: "Thời gian giữ tin tối đa khi phải gia hạn nhiều lần (giây).",
   redelivery_max: "Số lần hub giao lại một tin tối đa nếu agent không xác nhận; quá số này thì bỏ qua và báo.",
   escalation_marks_seconds: "Các mốc hub báo động leo thang khi agent im lặng quá lâu (giây, cách nhau dấu phẩy; 300,1800 = sau 5 phút rồi 30 phút).",
-  circuit_breaker_peer_messages: "Số tin agent qua lại với nhau liên tiếp tối đa trước khi hub ngắt mạch chống lặp vô hạn.",
+  circuit_breaker_peer_messages: "Ngưỡng ngắt mạch chống lặp (hiện hub dùng ngưỡng cứng trong lõi, ô này chưa điều khiển ngưỡng).",
   journal_online_days: "Số ngày giữ nhật ký tin ngay trên hub để xem nhanh; cũ hơn thì chuyển lưu trữ.",
   journal_rotate_mb: "Dung lượng nhật ký tối đa (MB) trước khi xoay vòng sang file mới.",
   admin_session_idle_seconds: "Thời gian không thao tác (giây) trước khi trang quản trị tự đăng xuất.",
