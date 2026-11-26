@@ -17,22 +17,65 @@
   .on { color: #1a7f37; font-weight: 600; } .off { color: #b42318; font-weight: 600; }
   .hidden { display: none; }
   .row-actions { white-space: nowrap; }
-  #msg { min-height: 1.2em; }
+  /* toasts: EVERY page notification (success or error) pops at the
+     very top of the viewport so the admin always sees it, wherever
+     they are scrolled to — the old single #msg line sat at the top
+     of the document and was off screen from most of the page, which
+     made buttons look dead. The container is promoted into the top
+     layer with the Popover API when a toast appears (see showToast),
+     so toasts also float above modal <dialog>s. */
+  #toasts { position: fixed; inset: auto; top: .6rem; left: 50%; transform: translateX(-50%); width: min(560px, calc(100vw - 1rem)); height: auto; margin: 0; padding: 0; border: none; background: transparent; color: inherit; overflow: visible; z-index: 2147483647; display: flex; flex-direction: column; gap: .45rem; pointer-events: none; }
+  /* A CLOSED toast box must render NOTHING (iOS fix, 2026-11-26):
+     the author display:flex above overrides the UA stylesheet's
+     [popover] display:none, and WebKit then paints its own UA
+     popover box — solid border, canvas background, margin:auto
+     centring — as an empty strip across the middle of the screen
+     (seen on the owner's iPhone right after the toast deploy).
+     Chromium scopes its UA popover box styles to the open state, so
+     the leak stayed invisible there. Two defences: the UA
+     neutralisation lives in the BASE rule (every state, not only
+     :popover-open), and :not(:popover-open) pins display:none until
+     showToast() actually opens the box. */
+  #toasts:not(:popover-open) { display: none; }
+  #toasts:popover-open { display: flex; inset: auto; top: .6rem; left: 50%; transform: translateX(-50%); width: min(560px, calc(100vw - 1rem)); height: auto; margin: 0; padding: 0; border: none; background: transparent; overflow: visible; }
+  .toast { pointer-events: auto; display: flex; align-items: flex-start; gap: .55rem; box-sizing: border-box; width: 100%; padding: .55rem .75rem; border-radius: 6px; border: 1.5px solid #1a7f37; background: #e9f7ee; color: #10381c; box-shadow: 0 6px 22px rgba(0,0,0,.35); font-size: .95rem; animation: toast-in .18s ease-out; }
+  .toast.err { border-color: #b42318; background: #fdecea; color: #5f130d; font-weight: 600; }
+  .toast .t-ico { flex: 0 0 auto; font-weight: 700; color: #1a7f37; }
+  .toast.err .t-ico { color: #b42318; }
+  .toast .t-text { flex: 1 1 auto; overflow-wrap: anywhere; }
+  .toast .t-close { flex: 0 0 auto; margin: 0; padding: 0 .25rem; background: transparent; border: none; font-size: 1.05rem; line-height: 1.2; color: inherit; }
+  @media (prefers-color-scheme: dark) {
+    .toast { background: #14351f; color: #d7f2de; }
+    .toast.err { background: #47150e; color: #ffd9d3; }
+  }
+  @keyframes toast-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
   dialog { max-width: 560px; width: 92%; }
   label { display: block; font-size: .88rem; margin-top: .4rem; }
-  @media (max-width: 720px) {
-    button { min-height: 44px; }
-    input, select, textarea { width: 100%; }
-    section.card { overflow-x: auto; }
-    table { min-width: 540px; }
-    h1 { font-size: 1.2rem; } h2 { font-size: 1.05rem; }
-    dialog { width: 94%; }
+  /* sections: one at a time, switched from the vertical side menu.
+     #app is a flex row: header line on top, side menu + active section
+     below. Sections stay direct children so the .tab-active switching
+     (and identity-based .hidden) keeps working unchanged. */
+  #app:not(.hidden) { display: flex; flex-wrap: wrap; align-items: flex-start; gap: .8rem; }
+  #app-head { flex: 1 1 100%; margin: 0; display: flex; align-items: center; gap: .6rem; }
+  #menu-btn { display: none; }
+  #nav-backdrop { display: none; }
+  /* side menu: vertical list, sticky beside the content */
+  #tab-bar { flex: 0 0 218px; position: sticky; top: .8rem; display: flex; flex-direction: column; gap: .25rem; max-height: calc(100vh - 1.6rem); overflow-y: auto; padding: .45rem; background: Canvas; border: 1px solid #8886; border-radius: 8px; }
+  .nav-head { display: flex; justify-content: flex-end; }
+  #nav-collapse-btn { min-height: 36px; padding: .15rem .6rem; border: 1px solid #8886; border-radius: 8px; background: transparent; color: inherit; margin: 0; }
+  #nav-close-btn { display: none; min-height: 36px; padding: .15rem .6rem; border: 1px solid #8886; border-radius: 8px; background: transparent; color: inherit; margin: 0; }
+  .tab-btn { display: flex; align-items: center; gap: .55rem; width: 100%; min-height: 44px; padding: .4rem .6rem; border: 1px solid transparent; border-radius: 8px; background: transparent; color: inherit; font-size: .95rem; text-align: left; margin: 0; }
+  .tab-btn:hover { border-color: #8886; }
+  .tab-btn.active { font-weight: 700; background: #8883; border-color: #8886; }
+  .tab-btn .tab-ico { flex: 0 0 1.3rem; text-align: center; font-size: 1.05rem; }
+  @media (min-width: 721px) {
+    /* collapsed rail (autohide on desktop): icons only, content widens */
+    #app.nav-collapsed #tab-bar { flex-basis: 58px; }
+    #app.nav-collapsed .nav-head { justify-content: center; }
+    #app.nav-collapsed .tab-btn { justify-content: center; padding-left: 0; padding-right: 0; }
+    #app.nav-collapsed .tab-btn .tab-label { display: none; }
   }
-  /* tabs: one section at a time instead of one long page */
-  #tab-bar { position: sticky; top: 0; z-index: 5; display: flex; gap: .3rem; overflow-x: auto; padding: .4rem .1rem; background: Canvas; border-bottom: 1px solid #8886; }
-  .tab-btn { white-space: nowrap; min-height: 44px; padding: .35rem .8rem; border: 1px solid #8886; border-radius: 999px; background: transparent; color: inherit; font-size: .95rem; }
-  .tab-btn.active { font-weight: 700; text-decoration: underline; border-color: currentColor; }
-  #app > section.card { display: none; }
+  #app > section.card { display: none; flex: 1 1 0; min-width: 0; }
   #app > section.card.tab-active:not(.hidden) { display: block; }
   /* guide accordion: topics collapsed by default, one open at a time */
   details.guide-acc { border: 1px solid #8886; border-radius: 8px; margin: .45rem 0; }
@@ -43,12 +86,59 @@
   details.guide-acc > .guide-body { padding: 0 .8rem .6rem; }
   details.guide-acc > .guide-body p { margin: .45rem 0; }
   details.guide-acc > .guide-body ul, details.guide-acc > .guide-body ol { margin: .3rem 0; padding-left: 1.4rem; }
+  /* narrow screens: this block MUST stay after every base rule above.
+     Equal-specificity base rules written later would otherwise win and
+     undo it (position:fixed on #tab-bar, display on #menu-btn) — that
+     cascade bug once squeezed the content into a narrow column. */
+  @media (max-width: 720px) {
+    button { min-height: 44px; }
+    input, select, textarea { width: 100%; }
+    fieldset { min-width: 0; }
+    /* every piece of content must fit the frame: no horizontal
+       scrolling anywhere on narrow screens. Long words/URLs wrap,
+       code strings (ids, tokens) may break anywhere. */
+    section.card p, section.card li, section.card div, section.card label,
+    section.card td, section.card summary { overflow-wrap: break-word; }
+    code { overflow-wrap: anywhere; }
+    .row-actions { white-space: normal; }
+    /* tables become stacked cards: the header row hides, every row is
+       a card and every cell a "label: value" line. The label text comes
+       from the per-table nth-child rules below and must match each
+       table's thead column order. */
+    table { min-width: 0; }
+    table, tbody, tr, td { display: block; }
+    thead { display: none; }
+    tbody tr { border: 1px solid #8886; border-radius: 8px; margin: 0 0 .6rem; padding: .15rem 0; }
+    td { border: none; border-bottom: 1px solid #8883; }
+    td:last-child { border-bottom: none; }
+    td::before { font-weight: 700; }
+    #agents-table td:nth-child(1)::before { content: "Agent: "; }
+    #agents-table td:nth-child(2)::before { content: "Trạng thái: "; }
+    #agents-table td:nth-child(3)::before { content: "Bot: "; }
+    #agents-table td:nth-child(4)::before { content: "Chờ / Lease: "; }
+    #agents-table td:nth-child(5)::before { content: "Token bot: "; }
+    #agents-table td:nth-child(6)::before { content: "Ghế: "; }
+    #agents-table td:nth-child(7)::before { content: "Thao tác: "; }
+    h1 { font-size: 1.2rem; } h2 { font-size: 1.05rem; }
+    dialog { width: 94%; }
+    /* side menu on narrow screens: fully hidden (autohide), opens as a
+       slide-over panel from the hamburger button; picking a section or
+       tapping the backdrop closes it again */
+    #menu-btn { display: inline-block; }
+    #app-head { position: sticky; top: 0; z-index: 40; background: Canvas; padding: .35rem 0; }
+    #tab-bar { flex: none; position: fixed; left: 0; top: 0; bottom: 0; z-index: 60; width: min(78vw, 300px); max-height: none; border-radius: 0 8px 8px 0; transform: translateX(-105%); transition: transform .22s ease; box-shadow: 2px 0 12px #0004; }
+    #app.nav-open #tab-bar { transform: none; }
+    #app.nav-open #nav-backdrop { display: block; position: fixed; inset: 0; z-index: 55; background: #0006; }
+    #nav-collapse-btn { display: none; }
+    #nav-close-btn { display: inline-block; }
+    .nav-head { justify-content: flex-end; }
+  }
 </style>
 </head>
 <body>
+<div id="toasts" popover="manual" aria-live="polite"></div>
 <h1>Quản trị Hub</h1>
 <p class="muted">Trang quản trị riêng của hub — chỉ quản trị viên. Agent chỉ vào được bằng quyền tạm thời do quản trị viên cấp.</p>
-<p id="msg" role="status"></p>
 
 <section id="login-box" class="card">
   <h2>Đăng nhập quản trị</h2>
@@ -80,16 +170,21 @@
 </section>
 
 <main id="app" class="hidden">
-  <p><button id="logout-btn">Đăng xuất</button> <a id="repo-link" href="https://github.com/nvnhathuy/muse2discord" target="_blank" rel="noopener">GitHub ↗</a></p>
+  <p id="app-head"><button id="menu-btn" type="button" aria-label="Mở menu">☰ Menu</button> <button id="logout-btn">Đăng xuất</button> <a id="repo-link" href="https://github.com/nvnhathuy/muse2discord" target="_blank" rel="noopener">GitHub ↗</a></p>
+  <div id="nav-backdrop"></div>
   <nav id="tab-bar" aria-label="Mục quản trị">
-    <button type="button" class="tab-btn" data-tab="overview-card">Tổng quan</button>
-    <button type="button" class="tab-btn" data-tab="laws-card">Luật cứng</button>
-    <button type="button" class="tab-btn" data-tab="queue-card">Hàng chờ</button>
-    <button type="button" class="tab-btn" data-tab="grants-card">Quyền tạm</button>
-    <button type="button" class="tab-btn" data-tab="ops-card">Cấu hình</button>
-    <button type="button" class="tab-btn" data-tab="account-card">Tài khoản</button>
-    <button type="button" class="tab-btn" data-tab="audit-card">Nhật ký</button>
-    <button type="button" class="tab-btn" data-tab="guide-card">Hướng dẫn</button>
+    <div class="nav-head">
+      <button type="button" id="nav-collapse-btn" title="Thu gọn / mở rộng menu" aria-expanded="true">«</button>
+      <button type="button" id="nav-close-btn" aria-label="Đóng menu">✕</button>
+    </div>
+    <button type="button" class="tab-btn" data-tab="overview-card" title="Tổng quan"><span class="tab-ico" aria-hidden="true">⌂</span><span class="tab-label">Tổng quan</span></button>
+    <button type="button" class="tab-btn" data-tab="laws-card" title="Luật cứng"><span class="tab-ico" aria-hidden="true">§</span><span class="tab-label">Luật cứng</span></button>
+    <button type="button" class="tab-btn" data-tab="queue-card" title="Hàng chờ"><span class="tab-ico" aria-hidden="true">☰</span><span class="tab-label">Hàng chờ</span></button>
+    <button type="button" class="tab-btn" data-tab="grants-card" title="Quyền tạm"><span class="tab-ico" aria-hidden="true">⚑</span><span class="tab-label">Quyền tạm</span></button>
+    <button type="button" class="tab-btn" data-tab="ops-card" title="Cấu hình"><span class="tab-ico" aria-hidden="true">⚙</span><span class="tab-label">Cấu hình</span></button>
+    <button type="button" class="tab-btn" data-tab="account-card" title="Tài khoản"><span class="tab-ico" aria-hidden="true">☺</span><span class="tab-label">Tài khoản</span></button>
+    <button type="button" class="tab-btn" data-tab="audit-card" title="Nhật ký"><span class="tab-ico" aria-hidden="true">✎</span><span class="tab-label">Nhật ký</span></button>
+    <button type="button" class="tab-btn" data-tab="guide-card" title="Hướng dẫn"><span class="tab-ico" aria-hidden="true">?</span><span class="tab-label">Hướng dẫn</span></button>
   </nav>
   <section class="card" id="overview-card">
     <h2>Tổng quan</h2>
@@ -182,14 +277,31 @@
 
   <section class="card" id="guide-card">
     <h2>Hướng dẫn quản trị</h2>
-    <p class="muted">Bấm vào tiêu đề để mở từng mục — mỗi lần chỉ một mục mở. Thêm agent mới: đọc mục 1A/1B và “Yêu cầu để agent hoạt động”, rồi làm theo mục “Tạo bot Discord và thêm agent — chi tiết từng bước”.</p>
+    <p class="muted">Trang này quản trị hub Discord của đội: danh sách agent và bot của chúng, luật cứng của phòng, hàng chờ tin, quyền tạm cho agent, cấu hình vận hành và tài khoản admin. Chỉ quản trị viên mới vào được; agent chỉ vào được bằng quyền tạm do quản trị viên cấp. Bấm vào tiêu đề để mở từng mục — mỗi lần chỉ một mục mở. Dựng hệ thống mới thì đọc mục “SETUP TỪ ĐẦU”; thêm agent thì đọc mục “Hai loại agent” rồi làm theo mục “Tạo bot Discord và thêm agent”.</p>
     <details name="guide-acc" class="guide-acc">
-      <summary>Agent nào thêm được / không thêm được (1A/1B)</summary>
+      <summary>SETUP TỪ ĐẦU — dựng hub từ số 0, từng bước</summary>
+      <div class="guide-body">
+        <p>Toàn văn nằm ở README của repo (mục “3. Triển khai mới hoàn toàn”) — dưới đây là tóm tắt đúng thứ tự, kèm tên biến môi trường cần khai (chỉ tên biến, giá trị thật nằm trong file .env của bạn, không ghi vào tài liệu).</p>
+        <ol>
+          <li><strong>Lấy mã nguồn:</strong> clone repo về máy chạy hub. Kiểm chứng trước khi dựng (không cần Discord/token): chạy <code>python3 -m pytest</code> trong thư mục <code>hub/</code> và <code>python3 -m unittest discover -s tests</code> trong thư mục <code>admin/</code>.</li>
+          <li><strong>Tạo bot và thu thập ID:</strong> mỗi agent cần một ứng dụng bot Discord riêng (cách tạo ở mục “Tạo bot Discord và thêm agent” bên dưới). Bật Developer Mode trong Discord (Cài đặt → Nâng cao → Developer Mode) rồi chuột phải để chép: <code>GUILD_ID</code> (server), <code>CHANNEL_ID</code> (kênh phòng), <code>OWNER_ID</code> (chủ phòng) và Application ID của từng bot.</li>
+          <li><strong>Chuẩn bị file .env:</strong> tạo file <code>.env</code> cạnh <code>deploy-integrated/compose.yaml</code> (hoặc trỏ biến <code>BRIDGE_ENV_FILE</code> tới file của bạn), đặt quyền <code>600</code>. Các biến cần khai: <code>AGENT_KEYS</code> (danh sách khoá agent, phân tách bằng dấu phẩy); với từng agent (thay <code>&lt;KEY&gt;</code> bằng khoá viết hoa): <code>&lt;KEY&gt;_BOT_TOKEN</code>, <code>&lt;KEY&gt;_BOT_ID</code>, <code>&lt;KEY&gt;_CALL_TOKENS</code> (mảng JSON các dạng tên gọi), <code>&lt;KEY&gt;_DISPLAY_NAME</code>, tuỳ chọn <code>&lt;KEY&gt;_RECEIVE_DEADLINE</code> (giây, tối thiểu 180); <code>GUILD_ID</code>, <code>CHANNEL_ID</code>, <code>OWNER_ID</code>; tuỳ chọn <code>CONTEXT_COUNT</code> (mặc định 5), <code>HUB_ADMIN_TOKEN</code> (mật khẩu admin ban đầu — bỏ trống thì là <code>admin123</code>, lần đăng nhập đầu vẫn bắt buộc đổi), <code>HUB_KEYDROP_TARGET</code> (đích nhận SSH key dạng <code>keydrop@&lt;HOST_IP&gt;</code>, bắt buộc nếu dùng tính năng tự thêm SSH key). Các biến cố định đã khai sẵn trong compose.yaml: <code>BRIDGE_JOURNAL</code>, <code>BRIDGE_SOCKET</code>, <code>BRIDGE_REGISTRY_DIR</code>, <code>HUB_ADMIN_HOST</code>, <code>HUB_ADMIN_PORT</code> (8899). Sau lần chạy đầu, danh sách agent được nhập vào registry và từ đó trang quản trị là nơi sửa chính — env chỉ còn vai trò khởi tạo.</li>
+          <li><strong>Build image:</strong> từ thư mục gốc của repo chạy <code>docker build -f deploy-integrated/Dockerfile -t discord-hub-v2-integrated .</code></li>
+          <li><strong>Chạy container:</strong> mở <code>deploy-integrated/compose.yaml</code>, sửa dòng <code>ports</code> thành địa chỉ LAN hoặc Tailscale của máy chạy hub (trang quản trị chỉ nên lộ trên mạng nội bộ/VPN, không mở ra Internet), rồi chạy <code>docker compose -f deploy-integrated/compose.yaml up -d</code>. Volume <code>bridge-v2-data</code> (gắn vào <code>/data</code>) chứa nhật ký, registry agent, thông tin đăng nhập admin và khoá SSH riêng của hub — đây là thư mục phải sao lưu.</li>
+          <li><strong>Đăng nhập lần đầu:</strong> mở <code>http://&lt;HUB_IP&gt;:8899</code>, đăng nhập bằng tên <code>admin</code> và mật khẩu <code>admin123</code> (hoặc giá trị <code>HUB_ADMIN_TOKEN</code> nếu đã đặt). Trang bắt buộc đổi mật khẩu ngay (ít nhất 8 ký tự, không trùng mật khẩu mặc định) — chưa đổi xong thì chưa vào được trang chính. Đổi xong, trang hiện mã khôi phục một lần: cất ngay vào trình quản lý mật khẩu.</li>
+          <li><strong>Cài keydrop phía máy chủ (một lần, cho tính năng SSH key):</strong> tạo user <code>keydrop</code>, cài hai script <code>agent-key-intake</code> và <code>agent-key-install</code>, bật systemd unit <code>agent-key-install.path</code>, và ghi public key của hub vào authorized_keys của user keydrop với ràng buộc forced-command — toàn văn ở <code>deploy-integrated/keydrop/README.md</code> trong repo. Nhờ ràng buộc này, khoá của hub trên máy chủ chỉ thêm được key, không mở được shell.</li>
+          <li><strong>Thêm agent trong trang:</strong> agent đã khai trong env có mặt sẵn sau lần chạy đầu — chỉ cần dựng lính canh rồi bấm “Mở lại”. Thêm agent mới thì làm ngay trong trang theo mục “Tạo bot Discord và thêm agent” bên dưới.</li>
+          <li><strong>Dựng lính canh phía agent và kiểm chứng:</strong> agent làm theo prompt kết nối (mục “Kết nối agent” bên dưới); xong thì điểm danh thử trong phòng để xác nhận agent trả lời được.</li>
+        </ol>
+      </div>
+    </details>
+    <details name="guide-acc" class="guide-acc">
+      <summary>Hai loại agent — thêm được / không thêm được (1A/1B)</summary>
       <div class="guide-body">
         <p><strong>1A — thêm được và hoạt động tốt:</strong></p>
         <ol>
           <li>Agent có máy tính riêng, không dùng API nhưng đánh thức được — ví dụ Muse chạy Muse trên máy riêng của agent, hub có tin là đánh thức dậy xử lý được.</li>
-          <li>Agent có API — có API key của hãng model do bạn tự tạo, một runner gọi API để trả lời.</li>
+          <li>Agent có API — có API key của hãng model do bạn tự tạo, một runner gọi API để trả lời. Trang này cho đặt base_url riêng cho từng agent API để trỏ tới endpoint tương thích OpenAI.</li>
         </ol>
         <p><strong>1B — không thêm được hoặc không ổn định:</strong></p>
         <ul>
@@ -204,7 +316,7 @@
       <div class="guide-body">
         <p>Sau khi thêm, agent chỉ hoạt động khi đủ các điều kiện sau:</p>
         <ul>
-          <li><strong>Bot Discord riêng</strong> cho agent, đã mời vào server, đã bật MESSAGE CONTENT INTENT và đủ quyền xem/gửi tin trong kênh làm việc — cách tạo và mời bot xem ở mục “Tạo bot Discord và thêm agent — chi tiết từng bước” ngay dưới.</li>
+          <li><strong>Bot Discord riêng</strong> cho agent, đã mời vào server, đã bật MESSAGE CONTENT INTENT và đủ quyền xem/gửi tin trong kênh làm việc — cách tạo và mời bot xem ở mục “Tạo bot Discord và thêm agent” ngay dưới.</li>
           <li><strong>Đường mạng thông</strong> từ máy agent (hoặc máy chạy runner) tới máy chủ hub — cùng LAN hoặc cùng tailnet Tailscale.</li>
           <li><strong>Riêng agent Muse (ghế SSH):</strong> máy chạy thường trực; lính canh và SSH key cài theo mục “Kết nối agent — prompt kết nối, SSH key, lính canh”.</li>
           <li><strong>Riêng agent API:</strong> runner chạy thường trực trên máy chủ và API key còn quota/số dư.</li>
@@ -228,12 +340,12 @@
               <li><em>Discord bot user id:</em> số Application ID lấy ở bước trên.</li>
               <li><em>Username bot:</em> username xem ở mục Bot trong Portal.</li>
               <li><em>Các dạng gọi tên:</em> các tên dùng để gọi agent trong phòng, phân tách bằng dấu phẩy; thường đặt trùng agent id.</li>
-              <li><em>Loại agent:</em> “SSH — agent có máy riêng, nối hub qua cầu” là ghế agent sống có máy riêng; “API — hub tự chạy bằng API key của hãng model” là agent chạy ngay trong hub — chọn loại này thì điền thêm khối API key bên dưới. (Agent nào thuộc diện thêm được: xem mục 1A/1B.)</li>
+              <li><em>Loại agent:</em> “SSH — agent có máy riêng, nối hub qua cầu” là ghế agent sống có máy riêng; “API — hub tự chạy bằng API key của hãng model” là agent chạy ngay trong hub — chọn loại này thì điền thêm khối API key bên dưới. (Agent nào thuộc diện thêm được: xem mục “Hai loại agent”.)</li>
               <li><em>Nhận tin “tất cả”:</em> để trống, không tích — trừ khi agent bắt buộc phải nghe các lời gọi chung cả phòng.</li>
               <li><em>Token bot:</em> dán token bot đã lấy ở trên vào ô này — đây là nơi duy nhất token thuộc về.</li>
             </ul>
           </li>
-          <li><strong>Sau khi tạo:</strong> hub tự nạp nóng agent mới, không cần tạo container mới hay khởi động lại. Agent mới mặc định ở trạng thái Tạm dừng: bấm “Mở lại” ở dòng của agent thì agent mới bắt đầu nhận tin. Điểm danh thử trong kênh của agent để xác nhận agent trả lời được.</li>
+          <li><strong>Sau khi tạo:</strong> hub tự nạp nóng agent mới, không cần tạo container mới hay khởi động lại. Agent mới mặc định ở trạng thái Tạm dừng: bấm “Mở lại” ở dòng của agent thì agent mới bắt đầu nhận tin. Điểm danh thử trong phòng để xác nhận agent trả lời được.</li>
         </ol>
       </div>
     </details>
@@ -257,9 +369,15 @@
       </div>
     </details>
     <details name="guide-acc" class="guide-acc">
-      <summary>Tạm dừng 2 mức</summary>
+      <summary>Tạm dừng, hàng chờ và khi agent không trả lời</summary>
       <div class="guide-body">
-        <p>Mức hub (nút Tạm dừng trong trang) chặn định tuyến ngay lập tức, bot vẫn online trong phòng; mức agent do phía agent tự dừng, hub không can thiệp.</p>
+        <p><strong>Tạm dừng 2 mức:</strong> mức hub (nút Tạm dừng trong trang) chặn định tuyến ngay lập tức, bot vẫn online trong phòng; mức agent do phía agent tự dừng, hub không can thiệp.</p>
+        <p><strong>Khi agent không trả lời — kiểm tra nhanh:</strong></p>
+        <ol>
+          <li>Agent có đang bị Tạm dừng không (xem mục Tổng quan của trang);</li>
+          <li>Ngắt mạch chống lặp: sau số tin liên tiếp của agent (ô <code>circuit_breaker_peer_messages</code> trong Cấu hình vận hành) mà không có tin nào của chủ phòng, hub tạm ngừng chuyển tin của agent — chủ phòng đăng một tin bất kỳ vào phòng là mạch tự đặt lại;</li>
+          <li>Mở mục Hàng chờ để xem tin đang kẹt ở bước nào: tin chưa lease là agent chưa nhận, tin đang lease là agent đã nhận nhưng chưa xác nhận xong. Lease kẹt thì bấm “Giải phóng lease”; tin cần bỏ qua hẳn thì dùng “Ack hộ” (thao tác nhạy cảm, phải xác thực lại).</li>
+        </ol>
       </div>
     </details>
     <details name="guide-acc" class="guide-acc">
@@ -271,7 +389,7 @@
     <details name="guide-acc" class="guide-acc">
       <summary>Cấu hình vận hành, nhật ký và audit</summary>
       <div class="guide-body">
-        <p><strong>Cấu hình vận hành:</strong> mỗi ô đều có ghi chú dễ hiểu ngay bên dưới — đọc ghi chú trước khi đổi giá trị.</p>
+        <p><strong>Cấu hình vận hành:</strong> mỗi ô đều có ghi chú dễ hiểu ngay bên dưới — đọc ghi chú trước khi đổi giá trị. Lưu cấu hình là thao tác nhạy cảm, phải xác thực lại (mật khẩu hoặc mã TOTP).</p>
         <p><strong>Nhật ký &amp; Audit:</strong> audit ghi lại mọi thao tác thay đổi trên trang; nếu thao tác do agent được uỷ quyền thực hiện, bản ghi kèm theo id của grant đó.</p>
       </div>
     </details>
@@ -342,7 +460,6 @@
   <p>
     <button id="prompt-copy-btn" type="button">Chép prompt</button>
     <button id="prompt-close-btn" type="button">Đóng</button>
-    <span id="prompt-copy-status" class="muted"></span>
   </p>
 </dialog>
 
@@ -355,7 +472,6 @@
     <button id="ssh-key-save-btn" type="button">Thêm key</button>
     <button id="ssh-key-close-btn" type="button">Đóng</button>
   </p>
-  <p id="ssh-key-status" class="muted"></p>
 </dialog>
 
 <dialog id="law-edit-dialog">
@@ -366,7 +482,6 @@
     <button id="law-edit-save-btn" type="button">Lưu</button>
     <button id="law-edit-close-btn" type="button">Đóng</button>
   </p>
-  <p id="law-edit-status" class="muted"></p>
 </dialog>
 
 <dialog id="laws-prompt-box">
@@ -376,7 +491,6 @@
   <p>
     <button id="laws-prompt-copy-btn" type="button">Chép prompt</button>
     <button id="laws-prompt-close-btn" type="button">Đóng</button>
-    <span id="laws-prompt-copy-status" class="muted"></span>
   </p>
 </dialog>
 
@@ -470,10 +584,62 @@ let totpEnabled = false; // step-up mode, from /api/overview identity
 let lastAgents = []; // roster from the latest /api/overview (for prompt building)
 const canSensitive = () => !grantToken || grantScope === "full";
 
-function note(text, isError) {
-  $("msg").textContent = text;
-  $("msg").style.color = isError ? "#b42318" : "";
+// ------------------------------------------------------------------
+// Toasts: the ONE way this page reports anything. Every notification
+// — success or error, from any section — pops at the very top of the
+// viewport and dismisses itself, so the admin can never miss it (the
+// old #msg line at the top of the document was off screen from most
+// of the page, which made buttons look dead). The container is
+// promoted into the top layer via the Popover API while any toast is
+// visible, so toasts also float above modal <dialog>s.
+const TOAST_OK_MS = 4000;   // success toasts dismiss themselves after ~4s
+const TOAST_ERR_MS = 8000;  // error toasts stay ~8s so they can be read
+function showToast(text, isError) {
+  const box = $("toasts");
+  if (!box) return;
+  const el = document.createElement("div");
+  el.className = "toast " + (isError ? "err" : "ok");
+  el.setAttribute("role", isError ? "alert" : "status");
+  const ico = document.createElement("span");
+  ico.className = "t-ico";
+  ico.textContent = isError ? "⚠" : "✓";
+  const txt = document.createElement("span");
+  txt.className = "t-text";
+  txt.textContent = text;
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "t-close";
+  btn.textContent = "×";
+  btn.title = "Đóng thông báo";
+  let timer = null;
+  const dismiss = () => {
+    if (timer) clearTimeout(timer);
+    el.remove();
+    if (!box.children.length && box.hidePopover) {
+      try { box.hidePopover(); } catch (e) { /* not open */ }
+    }
+  };
+  btn.onclick = dismiss;
+  el.append(ico, txt, btn);
+  box.prepend(el); // newest toast on top
+  if (box.showPopover) {
+    // (Re)promote the box to the TOP of the top layer: if the box was
+    // already open when a modal <dialog> opened, the dialog entered
+    // the top layer above it and this toast would report from behind
+    // the dialog. Hiding and re-showing inside the same task
+    // re-stacks the box above any dialog — no paint happens between.
+    try {
+      if (box.matches(":popover-open")) box.hidePopover();
+      box.showPopover();
+    } catch (e) { /* plain fixed box still works */ }
+  }
+  timer = setTimeout(dismiss, isError ? TOAST_ERR_MS : TOAST_OK_MS);
 }
+function note(text, isError) { showToast(text, isError); }
+// Agent-row actions report through agentNote() — kept as its own name
+// so call sites stay explicit about where the feedback belongs; it
+// raises the same toast as everything else now.
+function agentNote(text, isError) { showToast(text, isError); }
 async function api(method, path, body, headers) {
   const opts = { method, headers: Object.assign({}, headers || {}) };
   if (grantToken) opts.headers["Authorization"] = "Bearer " + grantToken;
@@ -578,9 +744,10 @@ $("login-grant-btn").onclick = async () => {
 };
 
 // ---------------------------------------------------------------- tabs
-// The app used to be one long scrolling page; now each section is a tab
-// and exactly one is visible at a time. Identity-based hiding (.hidden,
-// applied on grant login) still wins over the active tab.
+// The app used to be one long scrolling page; now each section is picked
+// from the vertical side menu and exactly one is visible at a time.
+// Identity-based hiding (.hidden, applied on grant login) still wins
+// over the active tab.
 function refreshTabBar() {
   document.querySelectorAll(".tab-btn").forEach((b) => {
     const c = $(b.dataset.tab);
@@ -602,11 +769,35 @@ function activateTab(cardId) {
     if (location.hash !== "#" + cardId) history.replaceState(null, "", "#" + cardId);
   }
 }
-document.querySelectorAll(".tab-btn").forEach((b) => { b.onclick = () => activateTab(b.dataset.tab); });
+document.querySelectorAll(".tab-btn").forEach((b) => { b.onclick = () => { activateTab(b.dataset.tab); closeSideNav(); }; });
 activateTab((location.hash || "").slice(1) || (() => { try { return localStorage.getItem("hub-admin-tab"); } catch (e) { return null; } })());
+
+// ------------------------------------------------------------- side menu
+// Wide screens: the menu is a sticky vertical sidebar that collapses to
+// an icon rail (autohide); the collapsed state is kept for this page
+// session only (sessionStorage). Narrow screens: the menu is fully
+// hidden and opens as a slide-over panel; choosing a section, tapping
+// the backdrop or pressing Escape closes it again.
+function closeSideNav() { $("app").classList.remove("nav-open"); }
+$("menu-btn").onclick = () => $("app").classList.toggle("nav-open");
+$("nav-backdrop").onclick = closeSideNav;
+$("nav-close-btn").onclick = closeSideNav;
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeSideNav(); });
+function applyNavCollapsed(collapsed) {
+  $("app").classList.toggle("nav-collapsed", collapsed);
+  $("nav-collapse-btn").textContent = collapsed ? "»" : "«";
+  $("nav-collapse-btn").setAttribute("aria-expanded", collapsed ? "false" : "true");
+}
+$("nav-collapse-btn").onclick = () => {
+  const collapsed = !$("app").classList.contains("nav-collapsed");
+  applyNavCollapsed(collapsed);
+  try { sessionStorage.setItem("hub-admin-nav-collapsed", collapsed ? "1" : "0"); } catch (e) {}
+};
+try { if (sessionStorage.getItem("hub-admin-nav-collapsed") === "1") applyNavCollapsed(true); } catch (e) {}
 
 // ---------------------------------------------------------------- agents
 async function refreshAgents() {
+  try {
   const data = await api("GET", "/api/overview");
   if (data.identity) {
     totpEnabled = !!data.identity.totp_enabled;
@@ -654,44 +845,50 @@ async function refreshAgents() {
     tbody.appendChild(tr);
     selects.forEach((s) => { const o = document.createElement("option"); o.value = a.key; o.textContent = a.display_name; s.appendChild(o); });
   }
+  return true;
+  } catch (e) { note("Tải danh sách agent lỗi: " + e.message, true); return false; }
 }
 async function pauseAgent(a) {
   const reason = prompt(`Lý do tạm dừng ${a.display_name} (bắt buộc, ghi vào audit):`, "bảo trì");
-  if (!reason) return;
-  try { await api("POST", `/api/agents/${a.key}/pause`, { reason, drain: true }); note(`Đã tạm dừng ${a.display_name}.`); refreshAgents(); }
-  catch (e) { note(e.message, true); }
+  if (!reason) { agentNote(`Đã huỷ tạm dừng ${a.display_name}: chưa nhập lý do.`); return; }
+  try { await api("POST", `/api/agents/${a.key}/pause`, { reason, drain: true }); agentNote(`Đã tạm dừng ${a.display_name}.`); refreshAgents(); }
+  catch (e) { agentNote(e.message, true); }
 }
 async function resumeAgent(a) {
-  try { await api("POST", `/api/agents/${a.key}/resume`, {}); note(`Đã mở lại ${a.display_name}.`); refreshAgents(); }
-  catch (e) { note(e.message, true); }
+  try { await api("POST", `/api/agents/${a.key}/resume`, {}); agentNote(`Đã mở lại ${a.display_name}.`); refreshAgents(); }
+  catch (e) { agentNote(e.message, true); }
 }
 async function toggleLock(a) {
-  const headers = stepUpHeaders(); if (!headers) return;
+  const headers = stepUpHeaders();
+  if (!headers) { agentNote(`Đã huỷ thay đổi khoá của ${a.display_name}: chưa xác thực lại quản trị.`); return; }
   const target = !a.locked;
-  try { await api("POST", `/api/agents/${a.key}/lock`, { locked: target }, headers); note(target ? `Đã khoá ${a.display_name} trong hub.` : `Đã mở khoá cho ${a.display_name}.`); refreshAgents(); }
-  catch (e) { note(e.message, true); }
+  try { await api("POST", `/api/agents/${a.key}/lock`, { locked: target }, headers); agentNote(target ? `Đã khoá ${a.display_name} trong hub.` : `Đã mở khoá cho ${a.display_name}.`); refreshAgents(); }
+  catch (e) { agentNote(e.message, true); }
 }
 async function setToken(a) {
-  const headers = stepUpHeaders(); if (!headers) return;
+  const headers = stepUpHeaders();
+  if (!headers) { agentNote(`Đã huỷ thay token ${a.display_name}: chưa xác thực lại quản trị.`); return; }
   const token = prompt(`Token bot mới cho ${a.display_name} (không hiển thị lại sau khi lưu):`);
-  if (!token) return;
-  try { await api("POST", `/api/agents/${a.key}/token`, { bot_token: token }, headers); note("Đã thay token."); refreshAgents(); }
-  catch (e) { note(e.message, true); }
+  if (!token) { agentNote(`Đã huỷ thay token ${a.display_name}: chưa nhập token mới.`); return; }
+  try { await api("POST", `/api/agents/${a.key}/token`, { bot_token: token }, headers); agentNote("Đã thay token."); refreshAgents(); }
+  catch (e) { agentNote(e.message, true); }
 }
 async function setApiKey(a) {
-  const headers = stepUpHeaders(); if (!headers) return;
+  const headers = stepUpHeaders();
+  if (!headers) { agentNote(`Đã huỷ đổi API key ${a.display_name}: chưa xác thực lại quản trị.`); return; }
   const key = prompt(`API key mới cho ${a.display_name} (key của hãng model; không hiển thị lại sau khi lưu):`);
-  if (!key) return;
-  try { await api("POST", `/api/agents/${a.key}/api-key`, { api_key: key }, headers); note("Đã đổi API key."); refreshAgents(); }
-  catch (e) { note(e.message, true); }
+  if (!key) { agentNote(`Đã huỷ đổi API key ${a.display_name}: chưa nhập key mới.`); return; }
+  try { await api("POST", `/api/agents/${a.key}/api-key`, { api_key: key }, headers); agentNote("Đã đổi API key."); refreshAgents(); }
+  catch (e) { agentNote(e.message, true); }
 }
 async function deleteAgent(a) {
-  if (a.pending || a.leases) { note(`Chưa xoá được: còn ${a.pending} tin chờ, ${a.leases} lease. Xử lý/tạm dừng trước.`, true); return; }
-  const headers = stepUpHeaders(); if (!headers) return;
+  if (a.pending || a.leases) { agentNote(`Chưa xoá được ${a.display_name}: còn ${a.pending} tin chờ, ${a.leases} lease. Hãy xử lý hết tin chờ ở mục Hàng chờ hoặc tạm dừng agent trước, rồi thử xoá lại.`, true); return; }
+  const headers = stepUpHeaders();
+  if (!headers) { agentNote(`Đã huỷ xoá ${a.display_name}: chưa xác thực lại quản trị.`); return; }
   const confirmName = prompt(`XOÁ CỨNG ${a.display_name} — hồ sơ bị xoá hẳn (journal/audit lịch sử vẫn giữ). Gõ đúng "${a.key}" để xác nhận:`);
-  if (!confirmName) return;
-  try { await api("DELETE", `/api/agents/${a.key}`, { confirm_name: confirmName }, headers); note(`Đã xoá ${a.display_name}.`); refreshAgents(); }
-  catch (e) { note(e.message, true); }
+  if (!confirmName) { agentNote(`Đã huỷ xoá ${a.display_name}: chưa gõ xác nhận.`); return; }
+  try { await api("DELETE", `/api/agents/${a.key}`, { confirm_name: confirmName }, headers); agentNote(`Đã xoá ${a.display_name}.`); refreshAgents(); }
+  catch (e) { agentNote(e.message, true); }
 }
 
 // ------------------------------------------------------- connect prompt
@@ -760,13 +957,12 @@ Lính canh là đường nhận tin chính, nhưng lính canh vẫn có thể ch
 function showConnectPrompt(a) {
   $("prompt-title").textContent = `Prompt kết nối — ${a.display_name}`;
   $("prompt-text").value = buildConnectPrompt(a, lastAgents);
-  $("prompt-copy-status").textContent = "";
   $("prompt-box").showModal();
 }
 $("prompt-copy-btn").onclick = async () => {
   try { await navigator.clipboard.writeText($("prompt-text").value); }
   catch (e) { $("prompt-text").select(); document.execCommand("copy"); }
-  $("prompt-copy-status").textContent = "Đã chép prompt.";
+  note("Đã chép prompt.");
 };
 $("prompt-close-btn").onclick = () => $("prompt-box").close();
 
@@ -786,20 +982,19 @@ function openSshKeyDialog(a) {
   $("ssh-key-title").textContent = `SSH key — ${a.display_name}`;
   $("ssh-key-current").textContent = "Trạng thái: " + sshKeyStateText(a);
   $("ssh-key-input").value = "";
-  $("ssh-key-status").textContent = "";
   $("ssh-key-dialog").showModal();
 }
 $("ssh-key-close-btn").onclick = () => $("ssh-key-dialog").close();
 $("ssh-key-save-btn").onclick = async () => {
   if (!sshKeyAgent) return;
   const publicKey = $("ssh-key-input").value.trim();
-  if (!publicKey) { $("ssh-key-status").textContent = "Chưa dán public key."; return; }
-  const headers = stepUpHeaders(); if (!headers) return;
-  $("ssh-key-status").textContent = "Đang gửi key lên VM điều phối…";
+  if (!publicKey) { note("Chưa dán public key.", true); return; }
+  const headers = stepUpHeaders();
+  if (!headers) { note("Đã huỷ thêm SSH key: chưa xác thực lại quản trị."); return; }
+  note("Đang gửi key lên VM điều phối…");
   try {
     const data = await api("POST", `/api/agents/${sshKeyAgent.key}/ssh-key`, { public_key: publicKey }, headers);
-    $("ssh-key-status").textContent = `Đã thêm key · ${data.fingerprint}`;
-    note(`Đã thêm SSH key cho ${sshKeyAgent.display_name}.`);
+    note(`Đã thêm SSH key cho ${sshKeyAgent.display_name} · ${data.fingerprint}`);
     $("ssh-key-input").value = "";
     await refreshAgents();
     const updated = lastAgents.find((x) => x.key === sshKeyAgent.key);
@@ -807,13 +1002,16 @@ $("ssh-key-save-btn").onclick = async () => {
       sshKeyAgent = updated;
       $("ssh-key-current").textContent = "Trạng thái: " + sshKeyStateText(updated);
     }
-  } catch (e) { $("ssh-key-status").textContent = "Lỗi: " + e.message; }
+  } catch (e) { note(e.message, true); }
 };
 
 // ---------------------------------------------------------------- laws
 function lawsWritable() { return !grantToken || grantScope === "full"; }
 async function refreshLaws() {
-  const data = await api("GET", "/api/laws");
+  let data;
+  try {
+    data = await api("GET", "/api/laws");
+  } catch (e) { note("Tải luật cứng lỗi: " + e.message, true); return; }
   const when = data.updated_at ? new Date(data.updated_at * 1000).toLocaleString("vi-VN") : "chưa có";
   $("laws-meta").textContent = `Phiên bản ${data.version} · cập nhật gần nhất: ${when} · ${data.rules.length} luật`;
   const writable = lawsWritable();
@@ -853,23 +1051,22 @@ let lawEditing = null;
 function openLawEditDialog(r) {
   lawEditing = r;
   $("law-edit-text").value = r.text;
-  $("law-edit-status").textContent = "";
   $("law-edit-dialog").showModal();
 }
 $("law-edit-close-btn").onclick = () => $("law-edit-dialog").close();
 $("law-edit-save-btn").onclick = async () => {
   if (!lawEditing) return;
   const text = $("law-edit-text").value.trim();
-  if (!text) { $("law-edit-status").textContent = "Nội dung luật không được để trống."; return; }
+  if (!text) { note("Nội dung luật không được để trống.", true); return; }
   try {
     const data = await api("PUT", `/api/laws/${lawEditing.id}`, { text });
     note(`Đã sửa luật — luật cứng giờ ở phiên bản ${data.version}.`);
     $("law-edit-dialog").close();
     refreshLaws(); refreshAudit();
-  } catch (e) { $("law-edit-status").textContent = "Lỗi: " + e.message; }
+  } catch (e) { note(e.message, true); }
 };
 async function deleteLaw(r) {
-  if (!confirm(`Xoá luật này khỏi luật cứng?\n\n“${r.text}”\n\nXoá xong phiên bản luật tăng lên — agent đọc lại sẽ không còn luật này.`)) return;
+  if (!confirm(`Xoá luật này khỏi luật cứng?\n\n“${r.text}”\n\nXoá xong phiên bản luật tăng lên — agent đọc lại sẽ không còn luật này.`)) { note("Đã huỷ xoá luật."); return; }
   try {
     const data = await api("DELETE", `/api/laws/${r.id}`);
     note(`Đã xoá luật — luật cứng giờ ở phiên bản ${data.version}.`);
@@ -885,13 +1082,12 @@ async function deleteLaw(r) {
 const LAWS_ANNOUNCEMENT = "tất cả agent vào đọc luật cứng trong file laws.json trên hub (đường dẫn /data/registry/laws.json) bằng lệnh bridge laws, cập nhật và ghi vào bộ nhớ dài hạn";
 $("laws-prompt-btn").onclick = () => {
   $("laws-prompt-text").value = LAWS_ANNOUNCEMENT;
-  $("laws-prompt-copy-status").textContent = "";
   $("laws-prompt-box").showModal();
 };
 $("laws-prompt-copy-btn").onclick = async () => {
   try { await navigator.clipboard.writeText($("laws-prompt-text").value); }
   catch (e) { $("laws-prompt-text").select(); document.execCommand("copy"); }
-  $("laws-prompt-copy-status").textContent = "Đã chép câu thông báo.";
+  note("Đã chép câu thông báo.");
 };
 $("laws-prompt-close-btn").onclick = () => $("laws-prompt-box").close();
 
@@ -960,7 +1156,8 @@ function openAgentDialog(a) {
         if (payload.kind === "api") {
           // Handing the hub a provider key is a sensitive operation:
           // the server demands a fresh step-up, like other key work.
-          headers = stepUpHeaders(); if (!headers) return;
+          headers = stepUpHeaders();
+          if (!headers) { note("Đã huỷ lưu agent: chưa xác thực lại quản trị."); return; }
           payload.provider = $("f-provider").value;
           payload.api_key = $("f-apikey").value.trim();
           payload.base_url = $("f-baseurl").value.trim();
@@ -988,10 +1185,10 @@ $("add-agent-btn").onclick = () => openAgentDialog(null);
 // ---------------------------------------------------------------- queue
 async function loadQueue() {
   const key = $("queue-agent").value;
-  if (!key) return;
+  if (!key) return false;
   try {
     const data = await api("GET", `/api/agents/${key}/queue`);
-    if (!data.items.length) { $("queue-box").textContent = "Hàng chờ trống. Cursor: " + data.cursor; return; }
+    if (!data.items.length) { $("queue-box").textContent = "Hàng chờ trống. Cursor: " + data.cursor; return true; }
     $("queue-box").innerHTML = data.items.map((i) =>
       `#${esc(i.message_id)} · ${esc(i.author || "?")} · giao ${i.deliveries} lần · ` +
       (i.leased ? `đang lease (còn ${i.lease_seconds_left}s)` : "chưa lease") +
@@ -999,27 +1196,44 @@ async function loadQueue() {
       (canSensitive() ? ` <button data-ack="${esc(i.message_id)}">Ack hộ (nhạy cảm)</button>` : "")
     ).join("<br>");
     $("queue-box").querySelectorAll("[data-rel]").forEach((b) => b.onclick = async () => {
-      await api("POST", `/api/agents/${key}/queue/release`, { message_id: b.dataset.rel }); loadQueue();
+      try {
+        await api("POST", `/api/agents/${key}/queue/release`, { message_id: b.dataset.rel });
+        note(`Đã giải phóng lease của tin #${b.dataset.rel}.`);
+      } catch (e) { note(e.message, true); }
+      loadQueue();
     });
     $("queue-box").querySelectorAll("[data-ack]").forEach((b) => b.onclick = async () => {
-      const headers = stepUpHeaders(); if (!headers) return;
-      await api("POST", `/api/agents/${key}/queue/ack-on-behalf`, { message_id: b.dataset.ack }, headers); loadQueue();
+      const headers = stepUpHeaders();
+      if (!headers) { note(`Đã huỷ ack hộ tin #${b.dataset.ack}: chưa xác thực lại quản trị.`); return; }
+      try {
+        await api("POST", `/api/agents/${key}/queue/ack-on-behalf`, { message_id: b.dataset.ack }, headers);
+        note(`Đã ack hộ tin #${b.dataset.ack} — tin đã rời hàng chờ.`);
+      } catch (e) { note(e.message, true); }
+      loadQueue();
     });
-  } catch (e) { note(e.message, true); }
+  } catch (e) { note(e.message, true); return false; }
+  return true;
 }
-$("queue-load-btn").onclick = loadQueue;
+$("queue-load-btn").onclick = async () => { if (await loadQueue()) note("Đã tải lại hàng chờ."); };
 
 // ---------------------------------------------------------------- grants
 async function refreshGrants() {
   if (grantToken) return;
-  const data = await api("GET", "/api/grants");
+  let data;
+  try {
+    data = await api("GET", "/api/grants");
+  } catch (e) { note("Tải danh sách quyền tạm lỗi: " + e.message, true); return; }
   const active = data.grants.filter((g) => g.active);
   $("grants-box").innerHTML = active.length ? active.map((g) =>
     `${esc(g.agent_key)} · ${esc(g.scope)} · còn ${Math.floor(g.seconds_left / 60)} phút · “${esc(g.reason)}” ` +
     `<button data-revoke="${g.id}">Thu hồi ngay</button>`).join("<br>")
     : "Không có quyền tạm nào đang hiệu lực.";
   $("grants-box").querySelectorAll("[data-revoke]").forEach((b) => b.onclick = async () => {
-    await api("DELETE", `/api/grants/${b.dataset.revoke}`); note("Đã thu hồi — hiệu lực ngay."); refreshGrants();
+    try {
+      await api("DELETE", `/api/grants/${b.dataset.revoke}`);
+      note("Đã thu hồi — hiệu lực ngay.");
+    } catch (e) { note(e.message, true); }
+    refreshGrants();
   });
 }
 $("grant-issue-btn").onclick = async () => {
@@ -1032,6 +1246,7 @@ $("grant-issue-btn").onclick = async () => {
     });
     $("grant-issued").innerHTML =
       `Token tạm (chỉ hiện lần này): <code>${esc(data.grant.token)}</code> — hết hạn sau ${$("grant-ttl").value} phút.`;
+    note(`Đã cấp quyền tạm cho ${$("grant-agent").value} (phạm vi ${$("grant-scope").value}).`);
     refreshGrants(); refreshAudit();
   } catch (e) { note(e.message, true); }
 };
@@ -1049,13 +1264,17 @@ const OPS_NOTES = {
 };
 async function refreshOps() {
   if (grantToken && grantScope !== "full") return;
-  const data = await api("GET", "/api/ops-config");
+  let data;
+  try {
+    data = await api("GET", "/api/ops-config");
+  } catch (e) { note("Tải cấu hình vận hành lỗi: " + e.message, true); return; }
   $("ops-box").innerHTML = Object.entries(data.ops_config).map(([k, v]) =>
     `<label>${esc(k)} <input data-op="${esc(k)}" value="${esc(Array.isArray(v) ? v.join(",") : v)}" size="18">` +
     (OPS_NOTES[k] ? `<div class="muted">${esc(OPS_NOTES[k])}</div>` : "") + `</label>`).join("");
 }
 $("ops-save-btn").onclick = async () => {
-  const headers = stepUpHeaders(); if (!headers) return;
+  const headers = stepUpHeaders();
+  if (!headers) { note("Đã huỷ lưu cấu hình: chưa xác thực lại quản trị."); return; }
   const changes = {};
   document.querySelectorAll("[data-op]").forEach((input) => {
     const raw = input.value.trim();
@@ -1067,20 +1286,30 @@ $("ops-save-btn").onclick = async () => {
 
 // ---------------------------------------------------------------- logs
 async function refreshJournal() {
+  try {
   const data = await api("GET", "/api/journal");
   const j = data.journal;
   $("journal-box").textContent = j.exists
     ? `Journal: ${j.lines} dòng · ${(j.bytes / 1048576).toFixed(2)} MB · phủ ${j.span_days ?? "?"} ngày · ` +
       `chính sách: giữ ${j.policy.online_days} ngày, xoay ở ${j.policy.rotate_mb} MB · ${j.action_needed ? "CẦN xử lý xoay/lưu trữ" : "trong ngưỡng"}`
     : "Chưa có journal.";
+    return true;
+  } catch (e) { note("Tải journal lỗi: " + e.message, true); return false; }
 }
 async function refreshAudit() {
+  try {
   const data = await api("GET", "/api/audit?limit=50");
   $("audit-box").innerHTML = data.entries.length ? data.entries.slice().reverse().map((e) =>
     `${new Date(e.ts * 1000).toLocaleString()} · ${esc(e.actor)} · ${esc(e.action)} · ${esc(e.target || "")}` +
     (e.grant_id ? ` · grant ${esc(e.grant_id)}` : "")).join("<br>") : "Chưa có bản ghi audit.";
+    return true;
+  } catch (e) { note("Tải audit lỗi: " + e.message, true); return false; }
 }
-$("audit-load-btn").onclick = () => { refreshAudit(); refreshJournal(); };
+$("audit-load-btn").onclick = async () => {
+  const a = await refreshAudit();
+  const j = await refreshJournal();
+  if (a && j) note("Đã tải lại nhật ký.");
+};
 
 // ---------------------------------------------------------------- account
 $("pw-change-btn").onclick = async () => {
@@ -1096,6 +1325,7 @@ $("recovery-gen-btn").onclick = async () => {
     const data = await api("POST", "/api/recovery-code", {});
     $("recovery-issued").innerHTML =
       `Mã khôi phục (chỉ hiện lần này, hãy cất ngay): <code>${esc(data.recovery_code)}</code>`;
+    note("Đã cấp mã khôi phục mới — mã cũ đã bị thay.");
     refreshAudit();
   } catch (e) { note(e.message, true); }
 };
@@ -1119,8 +1349,8 @@ $("totp-disable-btn").onclick = async () => {
   } catch (e) { note(e.message, true); }
 };
 
-function refreshAll() { refreshAgents(); refreshLaws(); refreshGrants(); refreshOps(); refreshJournal(); refreshAudit(); }
-$("refresh-btn").onclick = refreshAll;
+function refreshAll() { const p = refreshAgents(); refreshLaws(); refreshGrants(); refreshOps(); refreshJournal(); refreshAudit(); return p; }
+$("refresh-btn").onclick = async () => { if (await refreshAll()) note("Đã tải lại dữ liệu trang."); };
 </script>
 </body>
 </html>
