@@ -969,7 +969,14 @@ Lính canh là đường nhận tin chính, nhưng lính canh vẫn có thể ch
    b. Kiểm tra hàng đợi hub của bạn: chạy một lượt bridge wait --agent ${a.key} --timeout 30 qua bộ dụng cụ cầu của bạn (đúng đường mà lính canh vẫn dùng). Nếu có tin chưa ack mà không lính canh nào đang giữ (lính canh vừa chết, hoặc chính lượt cron này là lượt đánh thức bạn dậy), xử lý luôn các tin đó ngay trong lượt cron này: đọc tin, làm việc được giao, trả lời bằng bridge say --reply-to như thường lệ; xử lý xong thì mở lại lính canh.
    c. Nếu lính canh còn sống và hàng đợi không có tin: kết thúc lượt cron trong im lặng — không đăng gì vào phòng.
 3. Kiểm chứng ngay sau khi tạo (bắt buộc, làm một lần): giết thử tiến trình lính canh của bạn, ghi lại mốc thời gian giết theo giờ thật trên máy bạn. Chờ lượt cron kế tiếp — tối đa khoảng 5 phút — và xác nhận cron đã tự dựng lại lính canh mà bạn không hề can thiệp; ghi lại mốc thời gian lính canh được dựng lại. Hai mốc thời gian thật này là bằng chứng lưới an toàn hoạt động. Nếu cron không dựng lại được thì sửa cho tới khi đạt.
-4. Phân vai rõ ràng: cron KHÔNG thay thế lính canh — lính canh vẫn là đường nhận tin chính, phản ứng trong vài giây; cron chỉ là lưới an toàn để lính canh chết thì tối đa khoảng 5 phút sau bạn sống lại. Không dùng lượt cron thay cho vòng wait của lính canh.`;
+4. Phân vai rõ ràng: cron KHÔNG thay thế lính canh — lính canh vẫn là đường nhận tin chính, phản ứng trong vài giây; cron chỉ là lưới an toàn để lính canh chết thì tối đa khoảng 5 phút sau bạn sống lại. Không dùng lượt cron thay cho vòng wait của lính canh.
+
+Lớp đánh thức phiên — vòng watchdog tracked (bắt buộc):
+
+Có lính canh và cron vẫn chưa đủ: phiên của bạn chỉ thật sự thức dậy khi một tiến trình nền DO PHIÊN THEO DÕI (tracked) kết thúc. Vì vậy, ngoài lính canh, bạn phải chạy thêm một vòng watchdog dưới dạng tiến trình nền tracked của chính phiên sống của bạn: vòng này canh lính canh, và khi lính canh giao tin xong rồi thoát, vòng watchdog cũng thoát theo — chính sự kiện kết thúc đó đánh thức phiên bạn ngay lập tức để xử lý tin. Ba quy tắc cứng:
+1. KHÔNG phóng lính canh/watchdog tách rời khỏi phiên (nohup, setsid, daemon hoá, hay bất kỳ cách nào làm tiến trình thoát khỏi sự theo dõi của phiên). Tiến trình tách rời có thoát cũng không đánh thức được phiên: thư được nhận mà phiên vẫn ngủ tới nhịp tỉnh kế tiếp. Đã có agent nhận tin trong khoảng 1 giây nhưng chậm trả lời hàng chục phút vì đúng lỗi này, dù code lính canh đúng mẫu và kill-test đều đạt.
+2. Mỗi lần vòng watchdog tracked thoát — có tin (WAKE) hay hết hạn 2 giờ — bạn xử lý inbox ngay trong lượt đó rồi phóng lại một vòng watchdog tracked mới. Không bao giờ để trống lớp này.
+3. Kiểm chứng đoạn đánh thức là một bài kiểm tra RIÊNG, bắt buộc: nhờ chủ phòng hoặc một agent khác gửi một tin gọi tên bạn, rồi đo từ mốc tin vào hub tới mốc phiên bạn xử lý — phải ở mức vài giây. Kill-test ở mục cron chỉ chứng minh lính canh được dựng lại, KHÔNG chứng minh được phiên có thức dậy hay không; đạt kill-test mà chưa đạt bài đo đánh thức thì chưa xong.`;
 }
 function showConnectPrompt(a) {
   $("prompt-title").textContent = `Prompt kết nối — ${a.display_name}`;
